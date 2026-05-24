@@ -52,7 +52,7 @@ static void seedDefaultUsers() {
     strcpy(userDB[0].username, "Administrator");
     strcpy(userDB[0].password, "admin123");
     userDB[0].isAdmin = true;
-    
+
     // Pre-loaded student users
     userDB[1].userId = 1001;
     strcpy(userDB[1].username, "John Smith");
