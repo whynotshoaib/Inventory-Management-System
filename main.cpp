@@ -1274,8 +1274,6 @@ int main() {
          << "  |         THANK YOU FOR USING THE SYSTEM!            |\n"
          << "  |                  GOODBYE!                          |\n"
          << "  +---------------------------------------------------+\n";
-
-         cout<<"Hello from shoaib 1";
     
     return 0;
 }
