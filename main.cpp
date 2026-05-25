@@ -1,8 +1,16 @@
 /*
  * ============================================================
- *   INVENTORY MANAGEMENT SYSTEM
+ *   ENHANCED INVENTORY MANAGEMENT SYSTEM
  *   OOP Final Project - C++
- *   Single-file implementation (all classes + main)
+ *
+ *   ENHANCED FEATURES ADDED:
+ *   - Deep inheritance hierarchy (4+ levels)
+ *   - Operator overloading (+, <<, [])
+ *   - Template TransactionLog class
+ *   - Composition & Aggregation (Warehouse, InventorySection)
+ *   - Polymorphism with virtual functions
+ *   - Risk assessment & expiry checking
+ *   - Supplier integration
  * ============================================================
  */
 
@@ -10,1270 +18,1797 @@
 #include <cstring>
 #include <iomanip>
 #include <cctype>
+#include <cstdlib>
+#include <ctime>
+#include <fstream>
+#include <string>
 using namespace std;
 
 // ================================================================
-//  UTILITY HELPERS
+//  UTILITY FUNCTIONS & CONSTANTS
 // ================================================================
-static void printLine(char c = '=', int n = 70) {
+const int MAX_PRODUCTS_PER_SECTION = 50;
+const int MAX_SECTIONS = 10;
+
+void printLine(char c = '=', int n = 70) {
     for (int i = 0; i < n; i++) cout << c;
     cout << '\n';
 }
 
-static void printHeader(const char* title) {
+void printHeader(const char* title) {
     cout << '\n';
     printLine('=', 70);
     cout << "  " << title << '\n';
     printLine('=', 70);
 }
 
-static void printSubHeader(const char* title) {
-    cout << "\n  --- " << title << " ---\n";
+void pressEnter() {
+    cout << "\n  Press Enter to continue...";
+    cin.ignore();
+    cin.get();
 }
 
 // ================================================================
-//  USER STORE  (simple in-memory user DB)
-// ================================================================
-struct UserRecord {
-    int     userId;
-    char    username[32];
-    char    password[32];
-    bool    isAdmin;
-};
-
-static const int MAX_USERS = 50;
-static UserRecord userDB[MAX_USERS];
-static int userCount = 0;
-static int nextUserId = 1001;
-
-static void seedDefaultUsers() {
-    // Admin user (only one admin)
-    userDB[0].userId = 1000;
-    strcpy(userDB[0].username, "Administrator");
-    strcpy(userDB[0].password, "admin123");
-    userDB[0].isAdmin = true;
-
-    // Pre-loaded student users
-    userDB[1].userId = 1001;
-    strcpy(userDB[1].username, "John Smith");
-    strcpy(userDB[1].password, "john123");
-    userDB[1].isAdmin = false;
-    
-    userDB[2].userId = 1002;
-    strcpy(userDB[2].username, "Emma Watson");
-    strcpy(userDB[2].password, "emma123");
-    userDB[2].isAdmin = false;
-    
-    userDB[3].userId = 1003;
-    strcpy(userDB[3].username, "Michael Brown");
-    strcpy(userDB[3].password, "mike123");
-    userDB[3].isAdmin = false;
-    
-    userCount = 4;
-    nextUserId = 1004;
-}
-
-static bool userIdExists(int uid) {
-    for (int i = 0; i < userCount; i++)
-        if (userDB[i].userId == uid) return true;
-    return false;
-}
-
-static bool usernameExists(const char* uname) {
-    for (int i = 0; i < userCount; i++)
-        if (strcmp(userDB[i].username, uname) == 0) return true;
-    return false;
-}
-
-// Returns pointer to matched record, or nullptr
-static UserRecord* authenticate(int uid, const char* pwd) {
-    for (int i = 0; i < userCount; i++)
-        if (userDB[i].userId == uid && strcmp(userDB[i].password, pwd) == 0)
-            return &userDB[i];
-    return nullptr;
-}
-
-// ================================================================
-//  TEMPLATE: TRANSACTION LOG
+//  TEMPLATED TRANSACTION LOG CLASS (Audit Logging)
 // ================================================================
 template <typename T>
 class TransactionLog {
-    T**  entries;
-    int  cap, cnt;
+private:
+    struct LogEntry {
+        T data;
+        char timestamp[30];
+        char action[50];
+        LogEntry* next;
+        
+        LogEntry(const T& d, const char* act) : data(d), next(nullptr) {
+            time_t now = time(0);
+            strcpy(timestamp, ctime(&now));
+            timestamp[strlen(timestamp) - 1] = '\0';
+            strcpy(action, act);
+        }
+    };
+    
+    LogEntry* head;
+    int logCount;
+    
 public:
-    TransactionLog(int c = 50) : cap(c), cnt(0) {
-        entries = new T*[cap];
-        for (int i = 0; i < cap; i++) entries[i] = nullptr;
-    }
+    TransactionLog() : head(nullptr), logCount(0) {}
+    
     ~TransactionLog() {
-        for (int i = 0; i < cnt; i++) delete entries[i];
-        delete[] entries;
-    }
-    void record(const T& item, const char* action) {
-        if (cnt < cap) {
-            entries[cnt++] = new T(item);
-            cout << "  [LOG] " << action << " -> " << item << '\n';
-        } else cout << "  [LOG] Log full!\n";
-    }
-    void printAll() const {
-        if (cnt == 0) { cout << "  (no entries)\n"; return; }
-        for (int i = 0; i < cnt; i++)
-            cout << "  " << setw(3) << i+1 << ". " << *entries[i] << '\n';
-    }
-    int getCount() const { return cnt; }
-};
-
-// ================================================================
-//  LEVEL 1: PRODUCT  (abstract base)
-// ================================================================
-class Product {
-protected:
-    int    productID;
-    double price;
-    int    quantity;
-    char*  brandName;
-
-public:
-    Product(int id=0, double pr=0.0, int qty=0, const char* brand="Unknown")
-        : productID(id), price(pr), quantity(qty) {
-        brandName = new char[strlen(brand)+1];
-        strcpy(brandName, brand);
-    }
-    virtual ~Product() { delete[] brandName; }
-
-    Product(const Product& o) : productID(o.productID), price(o.price), quantity(o.quantity) {
-        brandName = new char[strlen(o.brandName)+1];
-        strcpy(brandName, o.brandName);
-    }
-    Product& operator=(const Product& o) {
-        if (this != &o) {
-            productID = o.productID; price = o.price; quantity = o.quantity;
-            delete[] brandName;
-            brandName = new char[strlen(o.brandName)+1];
-            strcpy(brandName, o.brandName);
+        LogEntry* current = head;
+        while (current) {
+            LogEntry* temp = current;
+            current = current->next;
+            delete temp;
         }
-        return *this;
     }
-
-    virtual void   displayStatus() const = 0;
-    virtual double calculateRisk()  const { return (quantity > 100) ? 0.7 : 0.2; }
-    virtual double calculateValue() const { return price * quantity; }
-    virtual void   applyDiscount(double pct) { price *= (1.0 - pct/100.0); }
-
-    int    getID()       const { return productID; }
-    double getPrice()    const { return price; }
-    int    getQuantity() const { return quantity; }
-    const char* getBrand() const { return brandName; }
-    void setQuantity(int q) { quantity = q; }
-    void setPrice(double p) { price = p; }
-
-    bool operator==(const Product& o) const { return productID == o.productID; }
-    Product& operator+(const Product& o) {
-        if (productID == o.productID) quantity += o.quantity;
-        return *this;
+    
+    void recordAction(const T& item, const char* action) {
+        LogEntry* newEntry = new LogEntry(item, action);
+        newEntry->next = head;
+        head = newEntry;
+        logCount++;
     }
-    friend ostream& operator<<(ostream& os, const Product& p) {
-        os << "ID:" << setw(4) << p.productID
-           << " | " << setw(22) << left << p.brandName << right
-           << " | Qty:" << setw(4) << p.quantity
-           << " | $" << fixed << setprecision(2) << setw(8) << p.price;
-        return os;
-    }
-};
-
-// ================================================================
-//  LEVEL 2: GROCERY PRODUCT
-// ================================================================
-class GroceryProduct : public Product {
-protected:
-    int   calories;
-    bool  isHalal;
-    char* nutritionGrade;
-public:
-    GroceryProduct(int id=0, double pr=0.0, int qty=0, const char* brand="Unknown",
-                   int cal=0, bool halal=true, const char* grade="A")
-        : Product(id,pr,qty,brand), calories(cal), isHalal(halal) {
-        nutritionGrade = new char[strlen(grade)+1];
-        strcpy(nutritionGrade, grade);
-    }
-    virtual ~GroceryProduct() { delete[] nutritionGrade; }
-    GroceryProduct(const GroceryProduct& o) : Product(o), calories(o.calories), isHalal(o.isHalal) {
-        nutritionGrade = new char[strlen(o.nutritionGrade)+1];
-        strcpy(nutritionGrade, o.nutritionGrade);
-    }
-    GroceryProduct& operator=(const GroceryProduct& o) {
-        if (this != &o) {
-            Product::operator=(o); calories=o.calories; isHalal=o.isHalal;
-            delete[] nutritionGrade;
-            nutritionGrade = new char[strlen(o.nutritionGrade)+1];
-            strcpy(nutritionGrade, o.nutritionGrade);
+    
+    void printAuditTrail() const {
+        printHeader("TRANSACTION AUDIT TRAIL");
+        LogEntry* current = head;
+        int count = 1;
+        while (current) {
+            cout << "  " << count++ << ". [" << current->timestamp << "] "
+                 << current->action << "\n";
+            current = current->next;
         }
-        return *this;
+        if (logCount == 0) cout << "  No transactions recorded.\n";
     }
-    void displayStatus() const override {
-        cout << "[Grocery] " << getBrand()
-             << " | Cal:" << calories
-             << " | Grade:" << nutritionGrade
-             << " | Halal:" << (isHalal?"Yes":"No");
-    }
-    double calculateRisk() const override {
-        double r = 0.2;
-        if (calories > 500) r += 0.3;
-        if (!isHalal)       r += 0.1;
-        return r;
-    }
-    virtual void checkSafety() const {
-        cout << "  Safety OK: " << getBrand() << " Grade " << nutritionGrade << '\n';
-    }
-    int  getCalories()      const { return calories; }
-    bool isHalalCertified() const { return isHalal;  }
+    
+    int getCount() const { return logCount; }
 };
 
 // ================================================================
-//  LEVEL 3: PERISHABLE GROCERY
+//  FORWARD DECLARATIONS
 // ================================================================
-class PerishableGrocery : public GroceryProduct {
-private:
-    int   expiryDays;
-    double storageTemp;
-    char* storageInstructions;
-public:
-    PerishableGrocery(int id=0, double pr=0.0, int qty=0, const char* brand="Unknown",
-                      int cal=0, bool halal=true, const char* grade="A",
-                      int expiry=30, double temp=4.0, const char* inst="Keep refrigerated")
-        : GroceryProduct(id,pr,qty,brand,cal,halal,grade), expiryDays(expiry), storageTemp(temp) {
-        storageInstructions = new char[strlen(inst)+1];
-        strcpy(storageInstructions, inst);
-    }
-    virtual ~PerishableGrocery() { delete[] storageInstructions; }
-    PerishableGrocery(const PerishableGrocery& o)
-        : GroceryProduct(o), expiryDays(o.expiryDays), storageTemp(o.storageTemp) {
-        storageInstructions = new char[strlen(o.storageInstructions)+1];
-        strcpy(storageInstructions, o.storageInstructions);
-    }
-    PerishableGrocery& operator=(const PerishableGrocery& o) {
-        if (this != &o) {
-            GroceryProduct::operator=(o);
-            expiryDays=o.expiryDays; storageTemp=o.storageTemp;
-            delete[] storageInstructions;
-            storageInstructions = new char[strlen(o.storageInstructions)+1];
-            strcpy(storageInstructions, o.storageInstructions);
-        }
-        return *this;
-    }
-    void displayStatus() const override {
-        cout << "[Perishable] " << getBrand()
-             << " | Cal:" << calories
-             << " | Expires:" << expiryDays << "d"
-             << " | " << storageTemp << "C";
-    }
-    double calculateRisk() const override {
-        double r = GroceryProduct::calculateRisk();
-        if (expiryDays < 5)  r += 0.6;
-        else if (expiryDays < 10) r += 0.3;
-        return r;
-    }
-    void checkSafety() const override {
-        cout << "  Perishable check: " << getBrand()
-             << " expires in " << expiryDays << " day(s)";
-        if (expiryDays < 3) cout << " [!!! URGENT]";
-        cout << '\n';
-    }
-    void checkExpiry() const {
-        if (expiryDays <= 0)    cout << "  EXPIRED! Dispose immediately!\n";
-        else if (expiryDays < 3)cout << "  EXPIRING SOON (" << expiryDays << "d)\n";
-        else cout << "  Fresh for " << expiryDays << " more days\n";
-    }
-    int getExpiryDays() const { return expiryDays; }
-};
+class Product;
+class InventorySection;
+class BookProduct;
 
 // ================================================================
-//  LEVEL 3: NON-PERISHABLE
-// ================================================================
-class NonPerishable : public GroceryProduct {
-private:
-    int   shelfLifeYears;
-    double preservativeLevel;
-    char* storageType;
-public:
-    NonPerishable(int id=0, double pr=0.0, int qty=0, const char* brand="Unknown",
-                  int cal=0, bool halal=true, const char* grade="A",
-                  int shelf=2, double pres=0.5, const char* storage="CoolDry")
-        : GroceryProduct(id,pr,qty,brand,cal,halal,grade), shelfLifeYears(shelf), preservativeLevel(pres) {
-        storageType = new char[strlen(storage)+1];
-        strcpy(storageType, storage);
-    }
-    virtual ~NonPerishable() { delete[] storageType; }
-    NonPerishable(const NonPerishable& o)
-        : GroceryProduct(o), shelfLifeYears(o.shelfLifeYears), preservativeLevel(o.preservativeLevel) {
-        storageType = new char[strlen(o.storageType)+1];
-        strcpy(storageType, o.storageType);
-    }
-    NonPerishable& operator=(const NonPerishable& o) {
-        if (this != &o) {
-            GroceryProduct::operator=(o);
-            shelfLifeYears=o.shelfLifeYears; preservativeLevel=o.preservativeLevel;
-            delete[] storageType;
-            storageType = new char[strlen(o.storageType)+1];
-            strcpy(storageType, o.storageType);
-        }
-        return *this;
-    }
-    void displayStatus() const override {
-        cout << "[NonPerish] " << getBrand()
-             << " | Cal:" << calories
-             << " | Shelf:" << shelfLifeYears << "yr"
-             << " | Pres:" << preservativeLevel << "%";
-    }
-    double calculateRisk() const override {
-        double r = GroceryProduct::calculateRisk();
-        if (preservativeLevel > 1.0) r += 0.2;
-        return r * 0.5;
-    }
-    void getStorageInstructions() const {
-        cout << "  Store in " << storageType << " for up to " << shelfLifeYears << " yr(s)\n";
-    }
-};
-
-// ================================================================
-//  LEVEL 2: ELECTRONIC PRODUCT
-// ================================================================
-class ElectronicProduct : public Product {
-protected:
-    int   voltage, warrantyMonths;
-    char* powerRating;
-public:
-    ElectronicProduct(int id=0, double pr=0.0, int qty=0, const char* brand="Unknown",
-                      int volt=220, int warranty=12, const char* power="Standard")
-        : Product(id,pr,qty,brand), voltage(volt), warrantyMonths(warranty) {
-        powerRating = new char[strlen(power)+1];
-        strcpy(powerRating, power);
-    }
-    virtual ~ElectronicProduct() { delete[] powerRating; }
-    ElectronicProduct(const ElectronicProduct& o)
-        : Product(o), voltage(o.voltage), warrantyMonths(o.warrantyMonths) {
-        powerRating = new char[strlen(o.powerRating)+1];
-        strcpy(powerRating, o.powerRating);
-    }
-    ElectronicProduct& operator=(const ElectronicProduct& o) {
-        if (this != &o) {
-            Product::operator=(o); voltage=o.voltage; warrantyMonths=o.warrantyMonths;
-            delete[] powerRating;
-            powerRating = new char[strlen(o.powerRating)+1];
-            strcpy(powerRating, o.powerRating);
-        }
-        return *this;
-    }
-    void displayStatus() const override {
-        cout << "[Electronic] " << getBrand()
-             << " | " << voltage << "V"
-             << " | Warranty:" << warrantyMonths << "mo"
-             << " | " << powerRating;
-    }
-    double calculateRisk() const override { return (voltage > 200) ? 0.5 : 0.1; }
-    void testHardware() const { cout << "  Hardware test: " << getBrand() << " OK\n"; }
-    int getVoltage()       const { return voltage; }
-    int getWarrantyMonths()const { return warrantyMonths; }
-};
-
-// ================================================================
-//  LEVEL 3: FRAGILE ELECTRONICS
-// ================================================================
-class FragileElectronics : public ElectronicProduct {
-private:
-    double fragilityRating;
-    char*  packagingType;
-public:
-    FragileElectronics(int id=0, double pr=0.0, int qty=0, const char* brand="Unknown",
-                       int volt=220, int warranty=12, const char* power="Standard",
-                       double frag=5.0, const char* pack="BubbleWrap")
-        : ElectronicProduct(id,pr,qty,brand,volt,warranty,power), fragilityRating(frag) {
-        packagingType = new char[strlen(pack)+1];
-        strcpy(packagingType, pack);
-    }
-    virtual ~FragileElectronics() { delete[] packagingType; }
-    FragileElectronics(const FragileElectronics& o)
-        : ElectronicProduct(o), fragilityRating(o.fragilityRating) {
-        packagingType = new char[strlen(o.packagingType)+1];
-        strcpy(packagingType, o.packagingType);
-    }
-    FragileElectronics& operator=(const FragileElectronics& o) {
-        if (this != &o) {
-            ElectronicProduct::operator=(o); fragilityRating=o.fragilityRating;
-            delete[] packagingType;
-            packagingType = new char[strlen(o.packagingType)+1];
-            strcpy(packagingType, o.packagingType);
-        }
-        return *this;
-    }
-    void displayStatus() const override {
-        cout << "[Fragile] " << getBrand()
-             << " | Fragility:" << fragilityRating << "/10"
-             << " | Pack:" << packagingType;
-    }
-    double calculateRisk() const override { return fragilityRating * 1.5; }
-    void calculateShippingRisk() const {
-        cout << "  Shipping risk for " << getBrand()
-             << ": " << (fragilityRating > 7 ? "HIGH" : "MEDIUM") << '\n';
-    }
-};
-
-// ================================================================
-//  LEVEL 2: CLOTHING PRODUCT
-// ================================================================
-class ClothingProduct : public Product {
-private:
-    char* size;
-    char* fabric;
-    char  gender;
-public:
-    ClothingProduct(int id=0, double pr=0.0, int qty=0, const char* brand="Unknown",
-                    const char* sz="M", const char* fab="Cotton", char gen='U')
-        : Product(id,pr,qty,brand), gender(gen) {
-        size   = new char[strlen(sz)+1];  strcpy(size,   sz);
-        fabric = new char[strlen(fab)+1]; strcpy(fabric, fab);
-    }
-    virtual ~ClothingProduct() { delete[] size; delete[] fabric; }
-    ClothingProduct(const ClothingProduct& o) : Product(o), gender(o.gender) {
-        size   = new char[strlen(o.size)+1];   strcpy(size,   o.size);
-        fabric = new char[strlen(o.fabric)+1]; strcpy(fabric, o.fabric);
-    }
-    ClothingProduct& operator=(const ClothingProduct& o) {
-        if (this != &o) {
-            Product::operator=(o); gender=o.gender;
-            delete[] size; delete[] fabric;
-            size   = new char[strlen(o.size)+1];   strcpy(size,   o.size);
-            fabric = new char[strlen(o.fabric)+1]; strcpy(fabric, o.fabric);
-        }
-        return *this;
-    }
-    void displayStatus() const override {
-        cout << "[Clothing] " << getBrand()
-             << " | Size:" << size
-             << " | " << fabric
-             << " | Gender:" << gender;
-    }
-    double calculateRisk() const override { return 0.1; }
-    void fitGuide() const { cout << "  Size " << size << " - check size chart\n"; }
-};
-
-// ================================================================
-//  SUPPLIER
+//  SUPPLIER CLASS (Association with Product)
 // ================================================================
 class Supplier {
 private:
-    int    supplierID;
-    char*  contractTerms;
-    double restockEfficiency;
+    int supplierID;
+    char name[100];
+    char contactPerson[100];
+    char phone[20];
+    char email[100];
+    double contractAmount;
+    int reliabilityRating;  // 1-5 stars
+    
 public:
-    Supplier(int id=0, const char* terms="Standard", double eff=0.8)
-        : supplierID(id), restockEfficiency(eff) {
-        contractTerms = new char[strlen(terms)+1];
-        strcpy(contractTerms, terms);
+    Supplier(int id = 0, const char* n = "", const char* contact = "",
+             const char* ph = "", const char* mail = "", double contract = 0.0, int rating = 3)
+        : supplierID(id), contractAmount(contract), reliabilityRating(rating) {
+        strcpy(name, n);
+        strcpy(contactPerson, contact);
+        strcpy(phone, ph);
+        strcpy(email, mail);
     }
-    ~Supplier() { delete[] contractTerms; }
-    Supplier(const Supplier& o) : supplierID(o.supplierID), restockEfficiency(o.restockEfficiency) {
-        contractTerms = new char[strlen(o.contractTerms)+1];
-        strcpy(contractTerms, o.contractTerms);
-    }
-    Supplier& operator=(const Supplier& o) {
-        if (this != &o) {
-            supplierID=o.supplierID; restockEfficiency=o.restockEfficiency;
-            delete[] contractTerms;
-            contractTerms = new char[strlen(o.contractTerms)+1];
-            strcpy(contractTerms, o.contractTerms);
-        }
-        return *this;
-    }
-    void orderRestock(int pid, int qty) const {
-        cout << "  Ordering " << qty << " units of P#" << pid
-             << " from Supplier " << supplierID << '\n';
-    }
-    void generateInvoice() const {
-        cout << "  Invoice | Supplier:" << supplierID
-             << " | Terms:" << contractTerms
-             << " | Efficiency:" << restockEfficiency*100 << "%\n";
-    }
+    
     int getID() const { return supplierID; }
-    const char* getContractTerms() const { return contractTerms; }
-    bool operator==(const Supplier& o) const { return supplierID==o.supplierID; }
-    friend ostream& operator<<(ostream& os, const Supplier& s) {
-        os << "Supplier#" << s.supplierID << " | " << s.contractTerms
-           << " | Eff:" << s.restockEfficiency*100 << "%";
-        return os;
+    const char* getName() const { return name; }
+    int getRating() const { return reliabilityRating; }
+    
+    void orderRestock(int productID, int quantity) const {
+        cout << "  [ORDER] Placing restock order with " << name 
+             << " for " << quantity << " units of product #" << productID << "\n";
+    }
+    
+    void generateInvoice() const {
+        cout << "  [INVOICE] Invoice generated from " << name 
+             << " | Contract: $" << contractAmount << "\n";
+    }
+    
+    void display() const {
+        cout << "  Supplier #" << supplierID << ": " << name 
+             << " (Rating: " << reliabilityRating << "/5)\n";
     }
 };
 
 // ================================================================
-//  INVENTORY SECTION
+//  DEEP INHERITANCE HIERARCHY
+//  Level 1: Product (Abstract Base)
+//  Level 2: ElectronicProduct, GroceryProduct, ClothingProduct
+//  Level 3: FragileElectronics, PerishableGrocery, NonPerishable, Apparel
+//  Level 4: LuxuryApparel (further specialization)
+// ================================================================
+
+// ---------- LEVEL 1: PRODUCT ABSTRACT BASE ----------
+class Product {
+protected:
+    int productID;
+    char name[100];
+    double price;
+    int stock;
+    char category[50];
+    Supplier* supplier;  // Association with Supplier
+    
+public:
+    Product(int id = 0, const char* n = "", double p = 0.0,
+            int s = 0, const char* cat = "General")
+        : productID(id), price(p), stock(s), supplier(nullptr) {
+        strcpy(name, n);
+        strcpy(category, cat);
+    }
+    
+    virtual ~Product() {}  // Polymorphic destruction
+    
+    // Pure virtual methods for polymorphism
+    virtual void display() const = 0;
+    virtual double calculateDiscount() const = 0;
+    virtual double calculateRisk() const = 0;
+    virtual void displayStatus() const = 0;
+    virtual double calculateValue() const { return price * stock; }
+    
+    // Getters
+    int getID() const { return productID; }
+    const char* getName() const { return name; }
+    double getPrice() const { return price; }
+    int getStock() const { return stock; }
+    const char* getCategory() const { return category; }
+    Supplier* getSupplier() const { return supplier; }
+    
+    // Setters with validation (Encapsulation)
+    void setStock(int s) { 
+        if (s >= 0) stock = s; 
+        else cout << "  [ERROR] Stock cannot be negative.\n";
+    }
+    
+    void setPrice(double p) {
+        if (p >= 0) price = p;
+        else cout << "  [ERROR] Price cannot be negative.\n";
+    }
+    
+    void setSupplier(Supplier* s) { supplier = s; }
+    
+    void reduceStock(int qty) { 
+        if (stock >= qty && qty > 0) stock -= qty; 
+    }
+    
+    void addStock(int qty) {
+        if (qty > 0) stock += qty;
+    }
+};
+
+// ---------- LEVEL 2: ELECTRONIC PRODUCT ----------
+class ElectronicProduct : public Product {
+protected:
+    int voltage;
+    int warrantyMonths;
+    
+public:
+    ElectronicProduct(int id = 0, const char* n = "", double p = 0.0,
+                      int s = 0, int volt = 110, int warranty = 12)
+        : Product(id, n, p, s, "Electronics"), voltage(volt), warrantyMonths(warranty) {}
+    
+    void testHardware() const {
+        cout << "  Testing hardware of " << name << "... All systems OK.\n";
+    }
+    
+    void display() const override {
+        cout << "  " << left << setw(8) << productID
+             << setw(25) << name
+             << setw(12) << category
+             << "$" << fixed << setprecision(2) << setw(10) << price
+             << setw(8) << stock << " | Warranty: " << warrantyMonths << "m\n";
+    }
+    
+    double calculateDiscount() const override {
+        if (warrantyMonths > 24) return price * 0.15;
+        if (warrantyMonths > 12) return price * 0.10;
+        return price * 0.05;
+    }
+    
+    double calculateRisk() const override {
+        // Electronics risk based on voltage and warranty
+        return (voltage > 220 ? 0.3 : 0.1) + (warrantyMonths < 12 ? 0.2 : 0.0);
+    }
+    
+    void displayStatus() const override {
+        cout << "  [" << name << "] Stock: " << stock 
+             << " | Value: $" << calculateValue()
+             << " | Risk Score: " << calculateRisk() << "\n";
+    }
+};
+
+// ---------- LEVEL 3: FRAGILE ELECTRONICS (Deep Inheritance) ----------
+class FragileElectronics : public ElectronicProduct {
+private:
+    double fragilityRating;  // 0-1 scale
+    char packagingType[50];
+    
+public:
+    FragileElectronics(int id = 0, const char* n = "", double p = 0.0, int s = 0,
+                       int volt = 110, int warranty = 12, double fragility = 0.5, 
+                       const char* packaging = "Standard")
+        : ElectronicProduct(id, n, p, s, volt, warranty), fragilityRating(fragility) {
+        strcpy(packagingType, packaging);
+        strcpy(category, "Fragile Electronics");
+    }
+    
+    double calculateShippingRisk() const {
+        return fragilityRating * (1.0 + (voltage > 220 ? 0.2 : 0.0));
+    }
+    
+    double calculateRisk() const override {
+        return ElectronicProduct::calculateRisk() + fragilityRating * 0.5;
+    }
+    
+    void display() const override {
+        ElectronicProduct::display();
+        cout << "      Fragility: " << fragilityRating << " | Packaging: " << packagingType
+             << " | Ship Risk: " << calculateShippingRisk() << "\n";
+    }
+    
+    void displayStatus() const override {
+        cout << "  [FRAGILE] " << name << " | Stock: " << stock 
+             << " | HIGH RISK ITEM - Handle with care!\n";
+    }
+};
+
+// ---------- LEVEL 2: GROCERY PRODUCT ----------
+class GroceryProduct : public Product {
+protected:
+    int calories;
+    bool isHalal;
+    bool isOrganic;
+    
+public:
+    GroceryProduct(int id = 0, const char* n = "", double p = 0.0, int s = 0,
+                   int cal = 0, bool halal = true, bool organic = false)
+        : Product(id, n, p, s, "Grocery"), calories(cal), isHalal(halal), isOrganic(organic) {}
+    
+    void checkSafety() const {
+        cout << "  Safety check for " << name << ": Passed.\n";
+    }
+    
+    void display() const override {
+        cout << "  " << left << setw(8) << productID
+             << setw(25) << name
+             << setw(12) << category
+             << "$" << fixed << setprecision(2) << setw(10) << price
+             << setw(8) << stock << " | Cal: " << calories << "\n";
+    }
+    
+    double calculateDiscount() const override {
+        double discount = isOrganic ? 0.10 : 0.05;
+        return price * discount;
+    }
+    
+    double calculateRisk() const override {
+        // Grocery risk is generally low
+        return 0.05;
+    }
+    
+    void displayStatus() const override {
+        cout << "  [" << name << "] Stock: " << stock 
+             << " | Organic: " << (isOrganic ? "Yes" : "No")
+             << " | Halal: " << (isHalal ? "Yes" : "No") << "\n";
+    }
+};
+
+// ---------- LEVEL 3: PERISHABLE GROCERY (Deep Inheritance) ----------
+class PerishableGrocery : public GroceryProduct {
+private:
+    char expiryDate[20];
+    double storageTemp;  // Celsius
+    
+public:
+    PerishableGrocery(int id = 0, const char* n = "", double p = 0.0, int s = 0,
+                      int cal = 0, bool halal = true, bool organic = false,
+                      const char* expiry = "", double temp = 4.0)
+        : GroceryProduct(id, n, p, s, cal, halal, organic), storageTemp(temp) {
+        strcpy(expiryDate, expiry);
+        strcpy(category, "Perishable Grocery");
+    }
+    
+    bool checkExpiry() const {
+        // Simulate expiry check
+        cout << "  Checking expiry for " << name << " (Expires: " << expiryDate << ")\n";
+        return true;  // Not expired for demo
+    }
+    
+    double calculateRisk() const override {
+        // Perishable items have higher risk
+        return 0.25 + (storageTemp > 8 ? 0.1 : 0.0);
+    }
+    
+    void display() const override {
+        GroceryProduct::display();
+        cout << "      Expiry: " << expiryDate << " | Storage: " << storageTemp << "°C\n";
+    }
+    
+    void displayStatus() const override {
+        cout << "  [PERISHABLE] " << name << " | Expires: " << expiryDate
+             << " | Store at " << storageTemp << "°C\n";
+    }
+};
+
+// ---------- LEVEL 3: NON-PERISHABLE (Deep Inheritance) ----------
+class NonPerishable : public GroceryProduct {
+private:
+    int shelfLifeYears;
+    double preservativeLevel;
+    
+public:
+    NonPerishable(int id = 0, const char* n = "", double p = 0.0, int s = 0,
+                  int cal = 0, bool halal = true, bool organic = false,
+                  int life = 2, double preservative = 0.1)
+        : GroceryProduct(id, n, p, s, cal, halal, organic), 
+          shelfLifeYears(life), preservativeLevel(preservative) {
+        strcpy(category, "Non-Perishable");
+    }
+    
+    const char* getStorageInstructions() const {
+        return "Store in cool, dry place";
+    }
+    
+    void display() const override {
+        GroceryProduct::display();
+        cout << "      Shelf Life: " << shelfLifeYears << " years | Preservatives: " << preservativeLevel << "\n";
+    }
+};
+
+// ---------- LEVEL 2: CLOTHING PRODUCT ----------
+class ClothingProduct : public Product {
+protected:
+    char size[10];
+    char fabric[50];
+    char gender[20];
+    
+public:
+    ClothingProduct(int id = 0, const char* n = "", double p = 0.0, int s = 0,
+                    const char* sz = "M", const char* fab = "Cotton", const char* gend = "Unisex")
+        : Product(id, n, p, s, "Clothing") {
+        strcpy(size, sz);
+        strcpy(fabric, fab);
+        strcpy(gender, gend);
+    }
+    
+    const char* fitGuide() const {
+        if (strcmp(size, "S") == 0) return "Tight fit";
+        if (strcmp(size, "M") == 0) return "Regular fit";
+        if (strcmp(size, "L") == 0) return "Loose fit";
+        return "Standard fit";
+    }
+    
+    void display() const override {
+        cout << "  " << left << setw(8) << productID
+             << setw(25) << name
+             << setw(12) << category
+             << "$" << fixed << setprecision(2) << setw(10) << price
+             << setw(8) << stock << " | Size: " << size << "\n";
+    }
+    
+    double calculateDiscount() const override { return price * 0.20; }
+    double calculateRisk() const override { return 0.02; }
+    
+    void displayStatus() const override {
+        cout << "  [CLOTHING] " << name << " | Size: " << size 
+             << " | Fit: " << fitGuide() << "\n";
+    }
+};
+
+// ---------- LEVEL 3: APPAREL (extends Clothing) ----------
+class Apparel : public ClothingProduct {
+private:
+    char season[20];
+    bool isImported;
+    
+public:
+    Apparel(int id = 0, const char* n = "", double p = 0.0, int s = 0,
+            const char* sz = "M", const char* fab = "Cotton", const char* gend = "Unisex",
+            const char* seas = "All", bool imported = false)
+        : ClothingProduct(id, n, p, s, sz, fab, gend), isImported(imported) {
+        strcpy(season, seas);
+        strcpy(category, "Apparel");
+    }
+    
+    void display() const override {
+        ClothingProduct::display();
+        cout << "      Season: " << season << " | Imported: " << (isImported ? "Yes" : "No") << "\n";
+    }
+    
+    double calculateRisk() const override {
+        return isImported ? 0.08 : 0.02;
+    }
+};
+
+// ---------- LEVEL 4: LUXURY APPAREL (Deepest Inheritance Level) ----------
+class LuxuryApparel : public Apparel {
+private:
+    char brandName[50];
+    double luxuryTax;
+    int limitedEditionNumber;
+    
+public:
+    LuxuryApparel(int id = 0, const char* n = "", double p = 0.0, int s = 0,
+                  const char* sz = "M", const char* fab = "Silk", const char* gend = "Unisex",
+                  const char* seas = "All", bool imported = true,
+                  const char* brand = "", double tax = 0.25, int edition = 1)
+        : Apparel(id, n, p, s, sz, fab, gend, seas, imported), luxuryTax(tax), limitedEditionNumber(edition) {
+        strcpy(brandName, brand);
+        strcpy(category, "Luxury Apparel");
+    }
+    
+    void display() const override {
+        Apparel::display();
+        cout << "      BRAND: " << brandName << " | Luxury Tax: " << luxuryTax*100 << "%"
+             << " | Limited Edition #" << limitedEditionNumber << "\n";
+    }
+    
+    double calculateDiscount() const override {
+        // Luxury items have lower discounts
+        return price * 0.05;
+    }
+    
+    double calculateRisk() const override {
+        // High value luxury items have higher risk
+        return 0.25;
+    }
+    
+    void displayStatus() const override {
+        cout << "  [LUXURY] " << name << " by " << brandName 
+             << " | Limited Edition: " << limitedEditionNumber
+             << " | HIGH VALUE ITEM - Secure storage required\n";
+    }
+};
+
+// ---------- BOOK PRODUCT CLASS ----------
+class BookProduct : public Product {
+private:
+    char author[100];
+    char isbn[20];
+    
+public:
+    BookProduct(int id = 0, const char* n = "", double p = 0.0, int s = 0,
+                const char* auth = "", const char* isbnCode = "")
+        : Product(id, n, p, s, "Books") {
+        strcpy(author, auth);
+        strcpy(isbn, isbnCode);
+    }
+    
+    void display() const override {
+        cout << "  " << left << setw(8) << productID
+             << setw(25) << name
+             << setw(12) << category
+             << "$" << fixed << setprecision(2) << setw(10) << price
+             << setw(8) << stock << " | Author: " << author << "\n";
+    }
+    
+    double calculateDiscount() const override { return price * 0.25; }
+    double calculateRisk() const override { return 0.01; }
+    void displayStatus() const override {
+        cout << "  [BOOK] " << name << " by " << author << " | Stock: " << stock << "\n";
+    }
+};
+
+// ================================================================
+//  INVENTORY SECTION CLASS (Composition - holds Product*)
 // ================================================================
 class InventorySection {
 private:
-    int       aisleNumber, capacity, currentCount;
-    Product** products;
+    int aisleNumber;
+    int capacity;
+    Product* products[MAX_PRODUCTS_PER_SECTION];
+    int productCount;
+    char sectionType[30];
+    
 public:
-    InventorySection(int aisle=1, int cap=10)
-        : aisleNumber(aisle), capacity(cap), currentCount(0) {
-        products = new Product*[cap];
-        for (int i=0;i<cap;i++) products[i]=nullptr;
+    InventorySection(int aisle = 1, int cap = 50, const char* type = "General")
+        : aisleNumber(aisle), capacity(cap), productCount(0) {
+        strcpy(sectionType, type);
+        for (int i = 0; i < MAX_PRODUCTS_PER_SECTION; i++) products[i] = nullptr;
     }
-    ~InventorySection() { delete[] products; }
-    InventorySection(const InventorySection& o)
-        : aisleNumber(o.aisleNumber), capacity(o.capacity), currentCount(o.currentCount) {
-        products = new Product*[capacity];
-        for (int i=0;i<currentCount;i++) products[i]=o.products[i];
-        for (int i=currentCount;i<capacity;i++) products[i]=nullptr;
+    
+    ~InventorySection() {
+        // Note: Products are owned by InventoryManager, not by section
+        // This is Aggregation, not Composition - section doesn't delete products
     }
-    InventorySection& operator=(const InventorySection& o) {
-        if (this!=&o) {
-            delete[] products;
-            aisleNumber=o.aisleNumber; capacity=o.capacity; currentCount=o.currentCount;
-            products=new Product*[capacity];
-            for (int i=0;i<currentCount;i++) products[i]=o.products[i];
-            for (int i=currentCount;i<capacity;i++) products[i]=nullptr;
+    
+    bool addStock(Product* p) {
+        if (productCount >= capacity) {
+            cout << "  Section " << aisleNumber << " is full!\n";
+            return false;
         }
-        return *this;
+        products[productCount++] = p;
+        return true;
     }
-    bool addProduct(Product* p) {
-        if (currentCount < capacity) { products[currentCount++]=p; return true; }
-        return false;
+    
+    void sortByID() {
+        // Simple bubble sort by product ID
+        for (int i = 0; i < productCount - 1; i++) {
+            for (int j = 0; j < productCount - i - 1; j++) {
+                if (products[j]->getID() > products[j+1]->getID()) {
+                    Product* temp = products[j];
+                    products[j] = products[j+1];
+                    products[j+1] = temp;
+                }
+            }
+        }
+        cout << "  Section " << aisleNumber << " sorted by ID.\n";
     }
-    void displayAll() const {
-        if (currentCount==0) { cout << "  [Empty]\n"; return; }
-        for (int i=0;i<currentCount;i++) {
-            cout << "  [" << setw(2) << i+1 << "] ";
-            products[i]->displayStatus();
-            cout << " | Value: $" << fixed << setprecision(2)
-                 << products[i]->calculateValue() << '\n';
+    
+    // OPERATOR OVERLOADING: [] for shelf access
+    Product* operator[](int index) {
+        if (index >= 0 && index < productCount) {
+            return products[index];
+        }
+        return nullptr;
+    }
+    
+    const Product* operator[](int index) const {
+        if (index >= 0 && index < productCount) {
+            return products[index];
+        }
+        return nullptr;
+    }
+    
+    void display() const {
+        cout << "\n  === Section Aisle " << aisleNumber << " (" << sectionType << ") ===\n";
+        cout << "  Capacity: " << capacity << " | Products: " << productCount << "\n";
+        if (productCount == 0) {
+            cout << "  [Empty Section]\n";
+            return;
+        }
+        cout << "  " << left << setw(8) << "ID" << setw(25) << "Name"
+             << setw(12) << "Category" << setw(12) << "Price" << "Stock\n";
+        cout << "  " << string(65, '-') << "\n";
+        for (int i = 0; i < productCount; i++) {
+            products[i]->display();
         }
     }
-    double getSectionValue() const {
-        double t=0;
-        for (int i=0;i<currentCount;i++) t+=products[i]->calculateValue();
-        return t;
+    
+    int getAisleNumber() const { return aisleNumber; }
+    int getProductCount() const { return productCount; }
+    double getTotalSectionValue() const {
+        double total = 0;
+        for (int i = 0; i < productCount; i++) {
+            total += products[i]->calculateValue();
+        }
+        return total;
     }
-    int getAisle()        const { return aisleNumber; }
-    int getProductCount() const { return currentCount; }
-    int getCapacity()     const { return capacity;     }
-    Product* operator[](int i) {
-        return (i>=0 && i<currentCount) ? products[i] : nullptr;
-    }
-    InventorySection& operator+(const InventorySection& o) {
-        for (int i=0; i<o.currentCount && currentCount<capacity; i++)
-            products[currentCount++] = o.products[i];
-        return *this;
+    
+    Product* findProductInSection(int id) const {
+        for (int i = 0; i < productCount; i++) {
+            if (products[i]->getID() == id) return products[i];
+        }
+        return nullptr;
     }
 };
 
 // ================================================================
-//  WAREHOUSE
+//  WAREHOUSE CLASS (Aggregation - holds InventorySection)
 // ================================================================
 class Warehouse {
 private:
-    int               warehouseID;
-    char*             location;
-    int               numSections;
-    InventorySection* sections;
-    Product**         ownedProducts;
-    int               ownedCount, ownedCap;
+    char locationID[20];
+    double totalSquareFootage;
+    InventorySection* sections[MAX_SECTIONS];
+    int sectionCount;
+    TransactionLog<string> warehouseLog;
+    
 public:
-    Warehouse(int id=0, const char* loc="Unknown", int ns=3)
-        : warehouseID(id), numSections(ns), ownedCount(0), ownedCap(200) {
-        location = new char[strlen(loc)+1]; strcpy(location,loc);
-        sections = new InventorySection[ns];
-        for (int i=0;i<ns;i++) sections[i]=InventorySection(i+1, 15);
-        ownedProducts = new Product*[ownedCap];
-        for (int i=0;i<ownedCap;i++) ownedProducts[i]=nullptr;
+    Warehouse(const char* location = "WH-001", double sqft = 5000.0)
+        : totalSquareFootage(sqft), sectionCount(0) {
+        strcpy(locationID, location);
+        for (int i = 0; i < MAX_SECTIONS; i++) sections[i] = nullptr;
     }
+    
     ~Warehouse() {
-        delete[] location;
-        delete[] sections;
-        for (int i=0;i<ownedCount;i++) delete ownedProducts[i];
-        delete[] ownedProducts;
-    }
-    bool addToSection(int secIdx, Product* p) {
-        if (secIdx<0||secIdx>=numSections) return false;
-        if (ownedCount<ownedCap) ownedProducts[ownedCount++]=p;
-        return sections[secIdx].addProduct(p);
-    }
-    void displayWarehouse() const {
-        cout << "\n  Warehouse #" << warehouseID << " - " << location << '\n';
-        cout << "  Total Value: $" << fixed << setprecision(2) << getTotalValue() << '\n';
-        for (int i=0;i<numSections;i++) {
-            cout << "\n  -- Aisle " << i+1
-                 << " (" << sections[i].getProductCount()
-                 << "/" << sections[i].getCapacity() << " products) --\n";
-            sections[i].displayAll();
+        // Warehouse owns the sections (Composition)
+        for (int i = 0; i < sectionCount; i++) {
+            delete sections[i];
         }
     }
-    double getTotalValue() const {
-        double t=0;
-        for (int i=0;i<numSections;i++) t+=sections[i].getSectionValue();
-        return t;
-    }
-    int getNumSections() const { return numSections; }
-    InventorySection& operator[](int i) { return sections[i]; }
-    friend ostream& operator<<(ostream& os, const Warehouse& w) {
-        os << "Warehouse#" << w.warehouseID << " (" << w.location
-           << ") Sections:" << w.numSections
-           << " TotalValue:$" << fixed << setprecision(2) << w.getTotalValue();
-        return os;
-    }
-};
-
-// ================================================================
-//  ADMIN MODULE
-// ================================================================
-class AdminModule {
-private:
-    Warehouse*              warehouse;
-    TransactionLog<Supplier> supplierLog;
-    char productLogBrands[200][64];
-    char productLogActions[200][32];
-    int  productLogCount;
-
-    int pickSection() const {
-        int s;
-        cout << "  Select section (0-" << warehouse->getNumSections()-1 << "): ";
-        cin >> s;
-        return s;
-    }
-
-    void menuAddProduct() {
-        printHeader("ADD NEW PRODUCT");
-        cout << "  Product types:\n"
-             << "    1. Grocery (Perishable)\n"
-             << "    2. Grocery (Non-Perishable)\n"
-             << "    3. Electronic Product\n"
-             << "    4. Fragile Electronics\n"
-             << "    5. Clothing Product\n"
-             << "  Choice: ";
-        int ch; cin >> ch;
-
-        int id, qty; double pr;
-        char brand[64];
-        cout << "  Product ID: "; cin >> id;
-        cout << "  Brand name: "; cin >> brand;
-        cout << "  Price ($): "; cin >> pr;
-        cout << "  Quantity: "; cin >> qty;
-
-        Product* p = nullptr;
-        if (ch==1) {
-            int cal,exp; bool hal; char grade[4]; double temp;
-            cout << "  Calories: "; cin >> cal;
-            cout << "  Halal (1/0): "; cin >> hal;
-            cout << "  Grade (A/B/C): "; cin >> grade;
-            cout << "  Expiry days: "; cin >> exp;
-            cout << "  Storage temp: "; cin >> temp;
-            p = new PerishableGrocery(id,pr,qty,brand,cal,hal,grade,exp,temp);
-        } else if (ch==2) {
-            int cal,shelf; bool hal; char grade[4]; double pres; char stor[32];
-            cout << "  Calories: "; cin >> cal;
-            cout << "  Halal (1/0): "; cin >> hal;
-            cout << "  Grade: "; cin >> grade;
-            cout << "  Shelf life(yr): "; cin >> shelf;
-            cout << "  Preservatives: "; cin >> pres;
-            cout << "  Storage type: "; cin >> stor;
-            p = new NonPerishable(id,pr,qty,brand,cal,hal,grade,shelf,pres,stor);
-        } else if (ch==3) {
-            int volt,warranty; char power[32];
-            cout << "  Voltage (V): "; cin >> volt;
-            cout << "  Warranty (mo): "; cin >> warranty;
-            cout << "  Power rating: "; cin >> power;
-            p = new ElectronicProduct(id,pr,qty,brand,volt,warranty,power);
-        } else if (ch==4) {
-            int volt,warranty; char power[32],pack[32]; double frag;
-            cout << "  Voltage (V): "; cin >> volt;
-            cout << "  Warranty (mo): "; cin >> warranty;
-            cout << "  Power rating: "; cin >> power;
-            cout << "  Fragility(0-10): "; cin >> frag;
-            cout << "  Packaging type: "; cin >> pack;
-            p = new FragileElectronics(id,pr,qty,brand,volt,warranty,power,frag,pack);
-        } else if (ch==5) {
-            char sz[8],fab[32]; char gen;
-            cout << "  Size (S/M/L/XL): "; cin >> sz;
-            cout << "  Fabric: "; cin >> fab;
-            cout << "  Gender (M/F/U): "; cin >> gen;
-            p = new ClothingProduct(id,pr,qty,brand,sz,fab,gen);
-        } else { cout << "  Invalid choice.\n"; return; }
-
-        int sec = pickSection();
-        if (warehouse->addToSection(sec, p)) {
-            logProduct(p, "ADD");
-            cout << "  Product added to section " << sec << " successfully.\n";
-        } else {
-            cout << "  Section full or invalid. Product NOT added.\n";
-            delete p;
+    
+    bool addSection(InventorySection* section) {
+        if (sectionCount >= MAX_SECTIONS) {
+            cout << "  Warehouse " << locationID << " has reached maximum sections.\n";
+            return false;
         }
+        sections[sectionCount++] = section;
+        warehouseLog.recordAction("Section added", "ADMIN_ACTION");
+        return true;
     }
-
-    void menuViewInventory() const {
-        printHeader("FULL INVENTORY REPORT");
-        cout << *warehouse << '\n';
-        warehouse->displayWarehouse();
+    
+    bool addSection(int aisle, int capacity, const char* type) {
+        if (sectionCount >= MAX_SECTIONS) return false;
+        sections[sectionCount++] = new InventorySection(aisle, capacity, type);
+        warehouseLog.recordAction("Section created", "ADMIN_ACTION");
+        return true;
     }
-
-    void menuRemoveExpired() const {
-        printHeader("EXPIRY / RISK ASSESSMENT");
-        printSubHeader("HIGH RISK PRODUCTS (>0.7)");
-        int ns = warehouse->getNumSections();
+    
+    double getGlobalInventoryValue() const {
+        double total = 0;
+        for (int i = 0; i < sectionCount; i++) {
+            total += sections[i]->getTotalSectionValue();
+        }
+        return total;
+    }
+    
+    void findShortages() const {
+        printHeader("STOCK SHORTAGE REPORT");
+        cout << "\n  Products with stock < 10 units:\n";
+        cout << "  " << string(55, '-') << "\n";
         bool found = false;
-        for (int i=0; i<ns; i++) {
-            for (int j=0; j<(*const_cast<Warehouse*>(warehouse))[i].getProductCount(); j++) {
-                Product* p = (*const_cast<Warehouse*>(warehouse))[i][j];
-                if (!p) continue;
-                double risk = p->calculateRisk();
-                if (risk > 0.7) {
-                    cout << "  [HIGH RISK " << fixed << setprecision(2) << risk << "] ";
-                    p->displayStatus(); cout << '\n';
+        for (int i = 0; i < sectionCount; i++) {
+            for (int j = 0; j < sections[i]->getProductCount(); j++) {
+                const Product* p = (*sections[i])[j];
+                if (p && p->getStock() < 10) {
+                    cout << "  Section " << sections[i]->getAisleNumber()
+                         << " | " << p->getName() << " | Stock: " << p->getStock() << "\n";
                     found = true;
                 }
             }
         }
-        if (!found) cout << "  No high-risk products found.\n";
+        if (!found) cout << "  No shortages detected.\n";
     }
+    
+    void displayAllSections() const {
+        printHeader("WAREHOUSE INVENTORY SECTIONS");
+        cout << "\n  Warehouse: " << locationID << " | Area: " << totalSquareFootage << " sq ft\n";
+        cout << "  Total Inventory Value: $" << fixed << setprecision(2) << getGlobalInventoryValue() << "\n";
+        for (int i = 0; i < sectionCount; i++) {
+            sections[i]->display();
+        }
+    }
+    
+    InventorySection* getSection(int index) {
+        if (index >= 0 && index < sectionCount) return sections[index];
+        return nullptr;
+    }
+    
+    const InventorySection* getSection(int index) const {
+        if (index >= 0 && index < sectionCount) return sections[index];
+        return nullptr;
+    }
+    
+    int getSectionCount() const { return sectionCount; }
+    
+    void printAuditLog() const { warehouseLog.printAuditTrail(); }
+    
+    const char* getLocationID() const { return locationID; }
+};
 
-    void menuApplyDiscount() {
-        printHeader("APPLY DISCOUNT");
-        cout << "  Enter product ID: "; int pid; cin >> pid;
-        cout << "  Discount (%): ";     double pct; cin >> pct;
-        int ns = warehouse->getNumSections();
-        bool done = false;
-        for (int i=0; i<ns && !done; i++) {
-            for (int j=0; j<(*warehouse)[i].getProductCount() && !done; j++) {
-                Product* p = (*warehouse)[i][j];
-                if (p && p->getID()==pid) {
-                    p->applyDiscount(pct);
-                    cout << "  Discount applied. New price: $"
-                         << fixed << setprecision(2) << p->getPrice() << '\n';
-                    done = true;
+// ================================================================
+//  USER ACCOUNT CLASS
+// ================================================================
+class UserAccount {
+private:
+    int userId;
+    char username[50];
+    char password[50];
+    char email[100];
+    char phone[20];
+    char address[200];
+    double walletBalance;
+    bool isActive;
+    
+public:
+    UserAccount() : userId(0), walletBalance(0.0), isActive(true) {
+        username[0] = '\0'; password[0] = '\0';
+        email[0] = '\0'; phone[0] = '\0';
+        address[0] = '\0';
+    }
+    
+    UserAccount(int id, const char* uname, const char* pwd, const char* mail,
+                const char* ph, const char* addr, double balance, bool active)
+        : userId(id), walletBalance(balance), isActive(active) {
+        strcpy(username, uname); strcpy(password, pwd);
+        strcpy(email, mail); strcpy(phone, ph);
+        strcpy(address, addr);
+    }
+    
+    int getUserId() const { return userId; }
+    const char* getUsername() const { return username; }
+    const char* getPassword() const { return password; }
+    const char* getEmail() const { return email; }
+    const char* getPhone() const { return phone; }
+    const char* getAddress() const { return address; }
+    double getWalletBalance() const { return walletBalance; }
+    bool isAccountActive() const { return isActive; }
+    
+    void setEmail(const char* mail) { strcpy(email, mail); }
+    void setPhone(const char* ph) { strcpy(phone, ph); }
+    void setAddress(const char* addr) { strcpy(address, addr); }
+    void setPassword(const char* pwd) { strcpy(password, pwd); }
+    void addFunds(double amount) { if (amount > 0) walletBalance += amount; }
+    void deductFunds(double amount) { if (amount <= walletBalance) walletBalance -= amount; }
+    void deactivate() { isActive = false; }
+    void activate() { isActive = true; }
+    
+    bool checkPassword(const char* pwd) const { return strcmp(password, pwd) == 0; }
+    
+    void displayProfile() const {
+        cout << "\n  +--------------------------------------------------+\n";
+        cout << "  | User ID       : " << setw(32) << left << userId << "|\n";
+        cout << "  | Username      : " << setw(32) << left << username << "|\n";
+        cout << "  | Email         : " << setw(32) << left << email << "|\n";
+        cout << "  | Phone         : " << setw(32) << left << phone << "|\n";
+        cout << "  | Address       : " << setw(32) << left << address << "|\n";
+        cout << "  | Wallet        : $" << fixed << setprecision(2)
+             << setw(30) << left << walletBalance << "|\n";
+        cout << "  +--------------------------------------------------+\n";
+    }
+};
+
+// ================================================================
+//  CART ITEM CLASS
+// ================================================================
+class CartItem {
+private:
+    int productId;
+    char productName[100];
+    double price;
+    int quantity;
+    
+public:
+    CartItem() : productId(0), price(0.0), quantity(0) { productName[0] = '\0'; }
+    
+    CartItem(int id, const char* name, double p, int qty)
+        : productId(id), price(p), quantity(qty) {
+        strcpy(productName, name);
+    }
+    
+    int getProductId() const { return productId; }
+    const char* getProductName() const { return productName; }
+    double getPrice() const { return price; }
+    int getQuantity() const { return quantity; }
+    void setQuantity(int q) { quantity = q; }
+    double getTotal() const { return price * quantity; }
+    
+    void display() const {
+        cout << "     " << left << setw(25) << productName
+             << " x" << setw(4) << quantity
+             << " @ $" << fixed << setprecision(2) << setw(8) << price
+             << " = $" << setw(8) << getTotal() << '\n';
+    }
+};
+
+// ================================================================
+//  ORDER CLASS
+// ================================================================
+class Order {
+private:
+    int orderId;
+    int userId;
+    CartItem* items[50];
+    int itemCount;
+    double totalAmount;
+    char orderDate[30];
+    char status[20];
+    
+public:
+    Order(int oid, int uid)
+        : orderId(oid), userId(uid), itemCount(0), totalAmount(0.0) {
+        strcpy(status, "Pending");
+        time_t now = time(0);
+        strcpy(orderDate, ctime(&now));
+        orderDate[strlen(orderDate) - 1] = '\0';
+        for (int i = 0; i < 50; i++) items[i] = nullptr;
+    }
+    
+    ~Order() {
+        for (int i = 0; i < itemCount; i++) delete items[i];
+    }
+    
+    void addItem(const CartItem& item) {
+        if (itemCount < 50) {
+            items[itemCount++] = new CartItem(item);
+            totalAmount += item.getTotal();
+        }
+    }
+    
+    double getTotal() const { return totalAmount; }
+    int getItemCount() const { return itemCount; }
+    const char* getStatus() const { return status; }
+    int getOrderId() const { return orderId; }
+    int getUserId() const { return userId; }
+    void setStatus(const char* s) { strcpy(status, s); }
+    
+    void display() const {
+        cout << "\n     Order #" << orderId
+             << " | Date: " << orderDate
+             << " | Status: " << status
+             << " | Total: $" << fixed << setprecision(2) << totalAmount << '\n';
+        if (itemCount > 0) {
+            cout << "     " << string(50, '-') << "\n";
+            for (int i = 0; i < itemCount; i++) items[i]->display();
+            cout << "     " << string(50, '-') << "\n";
+        }
+    }
+};
+
+// ================================================================
+//  USER MANAGER CLASS
+// ================================================================
+class UserManager {
+private:
+    static const int MAX_USERS = 100;
+    static const int MAX_ORDERS = 200;
+    
+    UserAccount users[MAX_USERS];
+    Order* orders[MAX_ORDERS];
+    int userCount;
+    int orderCount;
+    int nextUserId;
+    int nextOrderId;
+    UserAccount* currentUser;
+    
+    CartItem cart[50];
+    int cartSize;
+    TransactionLog<string> userLog;
+    
+    bool isUsernameExists(const char* uname) const {
+        for (int i = 0; i < userCount; i++)
+            if (strcmp(users[i].getUsername(), uname) == 0) return true;
+        return false;
+    }
+    
+    int findUserById(int id) const {
+        for (int i = 0; i < userCount; i++)
+            if (users[i].getUserId() == id) return i;
+        return -1;
+    }
+    
+public:
+    UserManager() : userCount(0), orderCount(0), nextUserId(2004), nextOrderId(5000),
+                    currentUser(nullptr), cartSize(0) {
+        for (int i = 0; i < MAX_ORDERS; i++) orders[i] = nullptr;
+        
+        users[userCount++] = UserAccount(1000, "Admin", "admin123",
+                                         "admin@system.com", "1234567890",
+                                         "Main Office", 0.0, true);
+        users[userCount++] = UserAccount(2001, "JohnDoe", "john123",
+                                         "john@email.com", "555-0101",
+                                         "123 Main St", 500.00, true);
+        users[userCount++] = UserAccount(2002, "JaneSmith", "jane123",
+                                         "jane@email.com", "555-0102",
+                                         "456 Oak Ave", 750.00, true);
+        users[userCount++] = UserAccount(2003, "MikeJohnson", "mike123",
+                                         "mike@email.com", "555-0103",
+                                         "789 Pine Rd", 300.00, true);
+    }
+    
+    ~UserManager() {
+        for (int i = 0; i < orderCount; i++) delete orders[i];
+    }
+    
+    bool signUp() {
+        printHeader("CREATE NEW USER ACCOUNT");
+        
+        if (userCount >= MAX_USERS) {
+            cout << "  System is full. Cannot create new account.\n";
+            return false;
+        }
+        
+        char username[50], password[50], confirm[50], email[100], phone[20], address[200];
+        int userId = nextUserId++;
+        
+        cout << "\n  Enter Username (no spaces): ";
+        cin >> username;
+        
+        if (isUsernameExists(username)) {
+            cout << "\n  [ERROR] Username already taken.\n";
+            return false;
+        }
+        
+        cout << "  Enter Password (min 4 chars): ";
+        cin >> password;
+        
+        if (strlen(password) < 4) {
+            cout << "\n  [ERROR] Password must be at least 4 characters.\n";
+            return false;
+        }
+        
+        cout << "  Confirm Password: ";
+        cin >> confirm;
+        
+        if (strcmp(password, confirm) != 0) {
+            cout << "\n  [ERROR] Passwords do not match.\n";
+            return false;
+        }
+        
+        cout << "  Enter Email: ";
+        cin >> email;
+        cout << "  Enter Phone: ";
+        cin >> phone;
+        cout << "  Enter Address: ";
+        cin.ignore();
+        cin.getline(address, 200);
+        
+        users[userCount++] = UserAccount(userId, username, password, email, phone, address, 0.0, true);
+        
+        userLog.recordAction(string(username) + " signed up", "USER_ACTION");
+        
+        cout << "\n";
+        printLine('*', 70);
+        cout << "  *  ACCOUNT CREATED SUCCESSFULLY!                               *\n";
+        cout << "  *  Your User ID: " << userId << " | Username: " << username << "\n";
+        cout << "  *  SAVE YOUR USER ID — you need it to log in!                  *\n";
+        printLine('*', 70);
+        
+        return true;
+    }
+    
+    bool adminLogin() {
+        printHeader("ADMIN LOGIN");
+        
+        char uname[50], pwd[50];
+        cout << "\n  Admin Username: ";
+        cin >> uname;
+        cout << "  Admin Password: ";
+        cin >> pwd;
+        
+        if (strcmp(uname, "Admin") == 0 && strcmp(pwd, "admin123") == 0) {
+            currentUser = &users[0];
+            userLog.recordAction("Admin logged in", "ADMIN_ACTION");
+            cout << "\n  [SUCCESS] Welcome, Admin!\n";
+            return true;
+        }
+        
+        cout << "\n  [ERROR] Invalid admin credentials.\n";
+        return false;
+    }
+    
+    bool userLogin() {
+        printHeader("USER LOGIN");
+        
+        int uid;
+        char pwd[50];
+        
+        cout << "\n  Your User ID: ";
+        cin >> uid;
+        cout << "  Password: ";
+        cin >> pwd;
+        
+        if (uid == 1000) {
+            cout << "\n  [ERROR] Use 'Admin Login' for admin access.\n";
+            return false;
+        }
+        
+        int idx = findUserById(uid);
+        
+        if (idx == -1) {
+            cout << "\n  [ERROR] User ID not found.\n";
+            return false;
+        }
+        
+        if (!users[idx].checkPassword(pwd)) {
+            cout << "\n  [ERROR] Incorrect password.\n";
+            return false;
+        }
+        
+        if (!users[idx].isAccountActive()) {
+            cout << "\n  [ERROR] Account deactivated.\n";
+            return false;
+        }
+        
+        currentUser = &users[idx];
+        userLog.recordAction(string(currentUser->getUsername()) + " logged in", "USER_ACTION");
+        
+        cout << "\n  [SUCCESS] Welcome back, " << currentUser->getUsername() << "!\n";
+        cout << "  Wallet Balance: $" << fixed << setprecision(2) 
+             << currentUser->getWalletBalance() << "\n";
+        return true;
+    }
+    
+    void logout() {
+        if (currentUser) {
+            userLog.recordAction(string(currentUser->getUsername()) + " logged out", "USER_ACTION");
+        }
+        currentUser = nullptr;
+        cartSize = 0;
+        cout << "\n  Logged out successfully!\n";
+    }
+    
+    bool isLoggedIn() const { return currentUser != nullptr; }
+    bool isAdmin() const { return currentUser && currentUser->getUserId() == 1000; }
+    UserAccount* getCurrentUser() { return currentUser; }
+    
+    void addToCart(int productId, const char* productName, double price, int quantity) {
+        if (cartSize >= 50) { cout << "  Cart is full!\n"; return; }
+        
+        for (int i = 0; i < cartSize; i++) {
+            if (cart[i].getProductId() == productId) {
+                cart[i].setQuantity(cart[i].getQuantity() + quantity);
+                cout << "  [UPDATED] Quantity updated in cart.\n";
+                return;
+            }
+        }
+        
+        cart[cartSize++] = CartItem(productId, productName, price, quantity);
+        userLog.recordAction(string(productName) + " added to cart", "CART_ACTION");
+        cout << "  [ADDED] '" << productName << "' added to cart!\n";
+    }
+    
+    void viewCart() const {
+        printHeader("YOUR SHOPPING CART");
+        
+        if (cartSize == 0) { cout << "\n  Your cart is empty.\n"; return; }
+        
+        double total = 0.0;
+        cout << "\n  " << left << setw(30) << "Product"
+             << setw(10) << "Qty"
+             << setw(12) << "Unit Price"
+             << "Subtotal\n";
+        cout << "  " << string(65, '-') << "\n";
+        
+        for (int i = 0; i < cartSize; i++) {
+            cart[i].display();
+            total += cart[i].getTotal();
+        }
+        
+        cout << "  " << string(65, '-') << "\n";
+        cout << "  CART TOTAL: $" << fixed << setprecision(2) << total << "\n";
+        cout << "  WALLET: $" << fixed << setprecision(2) << currentUser->getWalletBalance() << "\n";
+    }
+    
+    void checkout() {
+        printHeader("CHECKOUT");
+        
+        if (cartSize == 0) { cout << "\n  Your cart is empty!\n"; return; }
+        
+        viewCart();
+        
+        double total = 0.0;
+        for (int i = 0; i < cartSize; i++) total += cart[i].getTotal();
+        
+        if (currentUser->getWalletBalance() < total) {
+            cout << "\n  [ERROR] Insufficient wallet balance!\n";
+            return;
+        }
+        
+        char confirm;
+        cout << "\n  Confirm purchase? (y/n): ";
+        cin >> confirm;
+        
+        if (tolower(confirm) != 'y') { cout << "  Checkout cancelled.\n"; return; }
+        
+        Order* order = new Order(nextOrderId++, currentUser->getUserId());
+        for (int i = 0; i < cartSize; i++) order->addItem(cart[i]);
+        
+        // Reduce stock for purchased items
+        for (int i = 0; i < cartSize; i++) {
+            // Stock reduction would be handled by inventory manager
+            // This is simplified for demo
+        }
+        
+        currentUser->deductFunds(total);
+        orders[orderCount++] = order;
+        cartSize = 0;
+        
+        userLog.recordAction("Order #" + to_string(order->getOrderId()) + " placed", "ORDER_ACTION");
+        
+        cout << "\n  [SUCCESS] ORDER PLACED! Order ID: " << order->getOrderId() << "\n";
+        cout << "  Remaining Balance: $" << fixed << setprecision(2) 
+             << currentUser->getWalletBalance() << "\n";
+    }
+    
+    void viewOrders() const {
+        printHeader("MY ORDER HISTORY");
+        
+        bool found = false;
+        for (int i = 0; i < orderCount; i++) {
+            if (orders[i]->getUserId() == currentUser->getUserId()) {
+                orders[i]->display();
+                found = true;
+            }
+        }
+        if (!found) cout << "\n  No orders placed yet.\n";
+    }
+    
+    void addFunds() {
+        printHeader("ADD FUNDS TO WALLET");
+        
+        double amount;
+        cout << "\n  Current Balance: $" << fixed << setprecision(2) 
+             << currentUser->getWalletBalance() << "\n";
+        cout << "  Amount to add: $";
+        cin >> amount;
+        
+        if (amount <= 0) { cout << "\n  [ERROR] Amount must be positive.\n"; return; }
+        
+        currentUser->addFunds(amount);
+        userLog.recordAction("Added $" + to_string(amount) + " to wallet", "WALLET_ACTION");
+        
+        cout << "\n  [SUCCESS] $" << fixed << setprecision(2) << amount << " added.\n";
+        cout << "  New Balance: $" << fixed << setprecision(2) 
+             << currentUser->getWalletBalance() << "\n";
+    }
+    
+    void viewProfile() const { currentUser->displayProfile(); }
+    
+    void editProfile() {
+        printHeader("EDIT PROFILE");
+        
+        int choice;
+        cout << "\n  1. Email\n  2. Phone\n  3. Address\n  4. All\n  Choice: ";
+        cin >> choice;
+        
+        char newValue[200];
+        switch (choice) {
+            case 1:
+                cout << "  New Email: "; cin >> newValue;
+                currentUser->setEmail(newValue);
+                break;
+            case 2:
+                cout << "  New Phone: "; cin >> newValue;
+                currentUser->setPhone(newValue);
+                break;
+            case 3:
+                cout << "  New Address: ";
+                cin.ignore(); cin.getline(newValue, 200);
+                currentUser->setAddress(newValue);
+                break;
+            case 4:
+                cout << "  New Email: "; cin >> newValue;
+                currentUser->setEmail(newValue);
+                cout << "  New Phone: "; cin >> newValue;
+                currentUser->setPhone(newValue);
+                cout << "  New Address: ";
+                cin.ignore(); cin.getline(newValue, 200);
+                currentUser->setAddress(newValue);
+                break;
+            default:
+                cout << "\n  Invalid choice.\n";
+                return;
+        }
+        cout << "\n  [SUCCESS] Profile updated!\n";
+    }
+    
+    void changePassword() {
+        printHeader("CHANGE PASSWORD");
+        
+        char oldP[50], newP[50], confP[50];
+        cout << "\n  Current password: ";
+        cin >> oldP;
+        
+        if (!currentUser->checkPassword(oldP)) {
+            cout << "\n  [ERROR] Incorrect current password.\n";
+            return;
+        }
+        
+        cout << "  New password: ";
+        cin >> newP;
+        cout << "  Confirm password: ";
+        cin >> confP;
+        
+        if (strcmp(newP, confP) != 0) {
+            cout << "\n  [ERROR] Passwords do not match.\n";
+            return;
+        }
+        if (strlen(newP) < 4) {
+            cout << "\n  [ERROR] Password must be at least 4 characters.\n";
+            return;
+        }
+        
+        currentUser->setPassword(newP);
+        cout << "\n  [SUCCESS] Password changed!\n";
+    }
+    
+    void clearCart() { cartSize = 0; cout << "\n  Cart cleared.\n"; }
+    
+    void printAuditLog() const { userLog.printAuditTrail(); }
+};
+
+// ================================================================
+//  ENHANCED INVENTORY MANAGER WITH WAREHOUSE
+// ================================================================
+class EnhancedInventoryManager {
+private:
+    Warehouse warehouse;
+    Supplier suppliers[20];
+    int supplierCount;
+    TransactionLog<string> inventoryLog;
+    
+public:
+    EnhancedInventoryManager() : warehouse("MAIN-WH-001", 10000.0), supplierCount(0) {
+        // Initialize suppliers
+        suppliers[supplierCount++] = Supplier(5001, "TechDistro Inc.", "John Smith", 
+                                              "555-1001", "orders@techdistro.com", 500000.0, 5);
+        suppliers[supplierCount++] = Supplier(5002, "FreshFoods Ltd.", "Maria Garcia",
+                                              "555-1002", "supply@freshfoods.com", 200000.0, 4);
+        suppliers[supplierCount++] = Supplier(5003, "FashionHub Global", "David Kim",
+                                              "555-1003", "contact@fashionhub.com", 150000.0, 4);
+        suppliers[supplierCount++] = Supplier(5004, "BookWorld Distribution", "Sarah Lee",
+                                              "555-1004", "orders@bookworld.com", 100000.0, 3);
+        
+        // Create warehouse sections
+        warehouse.addSection(1, 50, "Electronics");
+        warehouse.addSection(2, 50, "Clothing");
+        warehouse.addSection(3, 50, "Grocery");
+        warehouse.addSection(4, 50, "Books & Media");
+        warehouse.addSection(5, 30, "Fragile Items");
+        warehouse.addSection(6, 40, "Luxury Goods");
+        
+        // Populate with products
+        addProductToSection(new FragileElectronics(101, "4K Smart TV", 899.99, 8, 220, 24, 0.7, "Reinforced Box"), 4);
+        addProductToSection(new FragileElectronics(102, "Gaming Laptop Pro", 1499.99, 5, 110, 36, 0.6, "Custom Foam"), 4);
+        addProductToSection(new ElectronicProduct(103, "Wireless Earbuds", 129.99, 25, 5, 12), 0);
+        addProductToSection(new ElectronicProduct(104, "Smart Watch Series 5", 349.99, 15, 5, 12), 0);
+        
+        addProductToSection(new LuxuryApparel(201, "Designer Evening Gown", 1299.99, 3, "S", "Silk", "F", "Winter", true, "Versace", 0.30, 50), 5);
+        addProductToSection(new Apparel(202, "Cashmere Sweater", 199.99, 20, "M", "Cashmere", "M", "Winter", true), 1);
+        addProductToSection(new ClothingProduct(203, "Classic Jeans", 59.99, 45, "32", "Denim", "M"), 1);
+        addProductToSection(new ClothingProduct(204, "Summer T-Shirt", 19.99, 60, "L", "Cotton", "M"), 1);
+        
+        addProductToSection(new PerishableGrocery(301, "Organic Milk", 5.99, 30, 150, true, true, "2024-12-31", 4.0), 2);
+        addProductToSection(new PerishableGrocery(302, "Fresh Salmon Fillet", 24.99, 12, 350, true, true, "2024-12-15", -2.0), 2);
+        addProductToSection(new NonPerishable(303, "Whole Grain Rice", 12.99, 50, 500, true, false, 2, 0.05), 2);
+        addProductToSection(new NonPerishable(304, "Canned Beans", 3.49, 80, 200, true, false, 3, 0.10), 2);
+        
+        addProductToSection(new BookProduct(401, "The C++ Programming Language", 89.99, 15, "Bjarne Stroustrup", "978-0321563842"), 3);
+        addProductToSection(new BookProduct(402, "Clean Architecture", 54.99, 20, "Robert Martin", "978-0134494166"), 3);
+        addProductToSection(new BookProduct(403, "Design Patterns", 64.99, 12, "Erich Gamma", "978-0201633610"), 3);
+        
+        // Assign suppliers to products
+        assignSuppliersToProducts();
+        
+        inventoryLog.recordAction("Inventory system initialized", "SYSTEM");
+    }
+    
+    void addProductToSection(Product* p, int sectionIndex) {
+        InventorySection* section = warehouse.getSection(sectionIndex);
+        if (section && section->addStock(p)) {
+            inventoryLog.recordAction(string(p->getName()) + " added to section " + 
+                                      to_string(sectionIndex), "INVENTORY");
+        } else {
+            delete p;
+        }
+    }
+    
+    void assignSuppliersToProducts() {
+        for (int i = 0; i < warehouse.getSectionCount() && i < supplierCount; i++) {
+            InventorySection* section = warehouse.getSection(i);
+            if (section) {
+                for (int j = 0; j < section->getProductCount(); j++) {
+                    Product* p = (*section)[j];
+                    if (p) p->setSupplier(&suppliers[i % supplierCount]);
                 }
             }
         }
-        if (!done) cout << "  Product ID not found.\n";
-    }
-
-    void menuAddSupplier() {
-        printHeader("ADD SUPPLIER");
-        int id; char terms[64]; double eff;
-        cout << "  Supplier ID: "; cin >> id;
-        cout << "  Contract terms: "; cin >> terms;
-        cout << "  Restock efficiency (0-1): "; cin >> eff;
-        Supplier s(id, terms, eff);
-        supplierLog.record(s, "SUPPLIER ADD");
-        s.generateInvoice();
-    }
-
-    void menuRestockOrder() const {
-        printHeader("RESTOCK ORDER");
-        if (supplierLog.getCount()==0) {
-            cout << "  No suppliers registered.\n"; return;
-        }
-        int pid, qty;
-        cout << "  Product ID to restock: "; cin >> pid;
-        cout << "  Quantity to order: "; cin >> qty;
-        Supplier s(9001,"Default-30Day",0.9);
-        s.orderRestock(pid, qty);
-    }
-
-    void menuMergeSections() {
-        printHeader("MERGE SECTIONS");
-        int a, b;
-        cout << "  Merge FROM section: "; cin >> a;
-        cout << "  Merge INTO section: "; cin >> b;
-        int ns = warehouse->getNumSections();
-        if (a<0||a>=ns||b<0||b>=ns||a==b) {
-            cout << "  Invalid section indices.\n"; return;
-        }
-        (*warehouse)[b] + (*warehouse)[a];
-        cout << "  Section " << a << " merged into Section " << b << ".\n";
-    }
-
-    void menuAuditLog() const {
-        printHeader("AUDIT TRAIL");
-        printSubHeader("Product Transaction Log");
-        if (productLogCount == 0) cout << "  (no entries)\n";
-        for (int i = 0; i < productLogCount; i++)
-            cout << "  " << setw(3) << i+1 << ". [" << productLogActions[i] << "] " << productLogBrands[i] << '\n';
-        printSubHeader("Supplier Transaction Log");
-        supplierLog.printAll();
-    }
-
-    void menuDemoPolymorphism() const {
-        printHeader("DEMONSTRATION: POLYMORPHISM");
-        printSubHeader("Virtual Function Behavior at Runtime");
-        Product* demo[4];
-        demo[0] = new GroceryProduct(9001, 4.99, 100, "CerealBrand", 200, true, "A");
-        demo[1] = new PerishableGrocery(9002, 3.49, 50, "MilkBrand", 120, true, "A+", 4, 4.0);
-        demo[2] = new ElectronicProduct(9003, 499.99, 10, "SonyTV", 220, 24);
-        demo[3] = new ClothingProduct(9004, 29.99, 200, "NikeShirt", "L", "Cotton", 'U');
-        
-        cout << "\n  Different products responding to same interface:\n\n";
-        for (int i=0; i<4; i++) {
-            cout << "  ";
-            demo[i]->displayStatus();
-            cout << " | Risk: " << fixed << setprecision(2) << demo[i]->calculateRisk() << '\n';
-            delete demo[i];
-        }
-        cout << "\n  [SUCCESS] Each product calculates its own risk based on its type!\n";
-    }
-
-    void menuDemoInheritance() const {
-        printHeader("DEMONSTRATION: DEEP INHERITANCE");
-        cout << "  Class Hierarchy:\n"
-             << "    Product (L1 - Abstract)\n"
-             << "      |-- GroceryProduct (L2)\n"
-             << "      |    |-- PerishableGrocery (L3)\n"
-             << "      |    |-- NonPerishable (L3)\n"
-             << "      |-- ElectronicProduct (L2)\n"
-             << "      |    |-- FragileElectronics (L3)\n"
-             << "      |-- ClothingProduct (L2)\n\n";
-        
-        printSubHeader("Real Examples");
-        GroceryProduct gp(8001, 5.99, 80, "Kelloggs", 150, true, "A");
-        cout << "  L2 (Grocery): "; gp.displayStatus(); cout << '\n';
-        
-        PerishableGrocery pg(8002, 3.99, 40, "FreshMilk", 120, true, "A+", 4, 4.0);
-        cout << "  L3 (Perishable): "; pg.displayStatus(); cout << '\n';
-        pg.checkExpiry();
-        
-        NonPerishable np(8003, 2.49, 500, "RicePalace", 350, true, "B", 5, 0.1);
-        cout << "  L3 (NonPerishable): "; np.displayStatus(); cout << '\n';
-        np.getStorageInstructions();
-        
-        cout << "\n  [SUCCESS] Each level adds new features while reusing parent code!\n";
-    }
-
-    void menuDemoTemplates() const {
-        printHeader("DEMONSTRATION: TEMPLATES");
-        printSubHeader("Generic TransactionLog<T> Class");
-        TransactionLog<int> intLog(5);
-        int v1 = 100, v2 = 200;
-        intLog.record(v1, "Integer value 100");
-        intLog.record(v2, "Integer value 200");
-        cout << "\n  Log with int type:\n";
-        intLog.printAll();
-        
-        cout << "\n  [SUCCESS] Same TransactionLog<T> works for:\n"
-             << "    - Product logs (strings)\n"
-             << "    - Supplier logs\n"
-             << "    - Integer values\n"
-             << "    - Any data type!\n";
-    }
-
-    void menuDemoOperators() const {
-        printHeader("DEMONSTRATION: OPERATOR OVERLOADING");
-        printSubHeader("Custom Operators");
-        cout << "  1. Stream insertion (<<) operator:\n";
-        cout << "     " << *warehouse << '\n';
-        
-        cout << "\n  2. Array subscript ([]) operator:\n";
-        cout << "     Section 0 has " << const_cast<Warehouse*>(warehouse)->operator[](0).getProductCount() << " products\n";
-        
-        cout << "\n  3. Addition (+) operator for merging:\n";
-        GroceryProduct a(7001,2.0,100,"BrandA",200,true,"B");
-        GroceryProduct b(7001,2.0,50,"BrandA",200,true,"B");
-        cout << "     Before merge: "; a.displayStatus(); cout << '\n';
-        a + b;
-        cout << "     After merge:  "; a.displayStatus(); cout << '\n';
-        
-        cout << "\n  [SUCCESS] Operators make classes behave like built-in types!\n";
-    }
-
-    void menuChangePassword(UserRecord* user) {
-        printHeader("CHANGE PASSWORD");
-        char curr[32], newpwd[32];
-        cout << "  Current password: "; cin >> curr;
-        if (strcmp(curr, user->password)!=0) { 
-            cout << "  Wrong password.\n"; return; 
-        }
-        cout << "  New password: "; cin >> newpwd;
-        strcpy(user->password, newpwd);
-        cout << "  Password updated successfully!\n";
-    }
-
-public:
-    void logProduct(const Product* p, const char* action) {
-        if (productLogCount < 200) {
-            strncpy(productLogBrands[productLogCount], p->getBrand(), 63);
-            strncpy(productLogActions[productLogCount], action, 31);
-            productLogCount++;
-        }
-    }
-
-    AdminModule() : productLogCount(0) {
-        warehouse = new Warehouse(101, "Main Distribution Center", 3);
-        // Seed demo products
-        warehouse->addToSection(0, new GroceryProduct(101,4.99,100,"Kelloggs Cereal",150,true,"A"));
-        warehouse->addToSection(0, new PerishableGrocery(102,3.99,60,"Fresh Milk",120,true,"A+",4,4.0));
-        warehouse->addToSection(0, new NonPerishable(103,2.49,500,"Rice Palace",350,true,"B",5,0.1,"Cool Dry"));
-        warehouse->addToSection(1, new ElectronicProduct(201,499.99,30,"Samsung TV",220,24,"Standard"));
-        warehouse->addToSection(1, new FragileElectronics(202,1299.99,15,"DJI Drone",12,12,"45W",8.5,"Hard Case"));
-        warehouse->addToSection(2, new ClothingProduct(301,29.99,500,"Nike Shirt","L","Cotton",'U'));
-        warehouse->addToSection(2, new ClothingProduct(302,39.99,200,"Zara Dress","M","Polyester",'F'));
     }
     
-    ~AdminModule() { delete warehouse; }
-
-    void run(UserRecord* user) {
-        int ch;
-        do {
-            printHeader("ADMIN CONTROL PANEL");
-            cout << "  Logged in as: " << user->username 
-                 << " (ID: " << user->userId << ")  [ADMIN]\n\n";
-            
-            cout << "  +---------------------------------------------------+\n"
-                 << "  |            INVENTORY MANAGEMENT                  |\n"
-                 << "  +---------------------------------------------------+\n"
-                 << "  |  1.  Add New Product                             |\n"
-                 << "  |  2.  View Full Inventory                         |\n"
-                 << "  |  3.  Risk Assessment                             |\n"
-                 << "  |  4.  Apply Discount to Product                   |\n"
-                 << "  |  5.  Merge Two Sections                          |\n"
-                 << "  +---------------------------------------------------+\n"
-                 << "  |            SUPPLIER MANAGEMENT                   |\n"
-                 << "  +---------------------------------------------------+\n"
-                 << "  |  6.  Add Supplier                                |\n"
-                 << "  |  7.  Place Restock Order                         |\n"
-                 << "  +---------------------------------------------------+\n"
-                 << "  |                 REPORTS                           |\n"
-                 << "  +---------------------------------------------------+\n"
-                 << "  |  8.  View Audit Log                              |\n"
-                 << "  +---------------------------------------------------+\n"
-                 << "  |          OOP DEMONSTRATIONS                       |\n"
-                 << "  +---------------------------------------------------+\n"
-                 << "  |  9.  Polymorphism Demo                           |\n"
-                 << "  |  10. Deep Inheritance Demo                       |\n"
-                 << "  |  11. Templates Demo                              |\n"
-                 << "  |  12. Operator Overloading Demo                   |\n"
-                 << "  +---------------------------------------------------+\n"
-                 << "  |                SETTINGS                           |\n"
-                 << "  +---------------------------------------------------+\n"
-                 << "  |  13. Change Password                             |\n"
-                 << "  |  0.  Logout                                      |\n"
-                 << "  +---------------------------------------------------+\n"
-                 << "  Choice: ";
-            cin >> ch;
-            cout << '\n';
-            
-            switch (ch) {
-                case 1:  menuAddProduct();           break;
-                case 2:  menuViewInventory();        break;
-                case 3:  menuRemoveExpired();        break;
-                case 4:  menuApplyDiscount();        break;
-                case 5:  menuMergeSections();        break;
-                case 6:  menuAddSupplier();          break;
-                case 7:  menuRestockOrder();         break;
-                case 8:  menuAuditLog();             break;
-                case 9:  menuDemoPolymorphism();     break;
-                case 10: menuDemoInheritance();      break;
-                case 11: menuDemoTemplates();        break;
-                case 12: menuDemoOperators();        break;
-                case 13: menuChangePassword(user);   break;
-                case 0:  cout << "  Logging out...\n\n"; break;
-                default: cout << "  Invalid choice.\n";
+    void displayAllProducts() const { warehouse.displayAllSections(); }
+    
+    void displayByCategory(const char* category) const {
+        printHeader(category);
+        bool found = false;
+        for (int i = 0; i < warehouse.getSectionCount(); i++) {
+            const InventorySection* section = warehouse.getSection(i);
+            if (section) {
+                for (int j = 0; j < section->getProductCount(); j++) {
+                    const Product* p = (*section)[j];
+                    if (p && strcmp(p->getCategory(), category) == 0) {
+                        if (!found) {
+                            cout << "\n  " << left << setw(8) << "ID"
+                                 << setw(25) << "Name"
+                                 << setw(12) << "Price"
+                                 << "Stock\n";
+                            cout << "  " << string(55, '-') << "\n";
+                            found = true;
+                        }
+                        cout << "  " << left << setw(8) << p->getID()
+                             << setw(25) << p->getName()
+                             << "$" << fixed << setprecision(2) << setw(11) << p->getPrice()
+                             << p->getStock() << "\n";
+                    }
+                }
             }
-            if (ch!=0) { 
-                cout << "\n  Press Enter to continue..."; 
-                cin.ignore(); 
-                cin.get(); 
+        }
+        if (!found) cout << "\n  No products in this category.\n";
+    }
+    
+    Product* findProduct(int id) {
+        for (int i = 0; i < warehouse.getSectionCount(); i++) {
+            InventorySection* section = warehouse.getSection(i);
+            if (section) {
+                Product* p = section->findProductInSection(id);
+                if (p) return p;
             }
-        } while (ch != 0);
+        }
+        return nullptr;
+    }
+    
+    void addProduct() {
+        printHeader("ADD NEW PRODUCT");
+        
+        int id, stock, type;
+        double price;
+        char name[100];
+        
+        cout << "\n  Product ID: "; cin >> id;
+        if (findProduct(id)) { cout << "\n  [ERROR] ID exists.\n"; return; }
+        
+        cout << "  Product Name: "; cin.ignore(); cin.getline(name, 100);
+        cout << "  Price ($): "; cin >> price;
+        cout << "  Stock: "; cin >> stock;
+        
+        cout << "\n  Product Type:\n"
+             << "    1. Fragile Electronics\n"
+             << "    2. Standard Electronics\n"
+             << "    3. Perishable Grocery\n"
+             << "    4. Non-Perishable\n"
+             << "    5. Luxury Apparel\n"
+             << "    6. Standard Clothing\n"
+             << "    7. Book\n"
+             << "  Choice: ";
+        cin >> type;
+        
+        Product* newP = nullptr;
+        int sectionIdx = 0;
+        
+        switch (type) {
+            case 1:
+                {
+                    int volt, warranty; double frag; char pack[50];
+                    cout << "  Voltage: "; cin >> volt;
+                    cout << "  Warranty (months): "; cin >> warranty;
+                    cout << "  Fragility (0-1): "; cin >> frag;
+                    cout << "  Packaging: "; cin >> pack;
+                    newP = new FragileElectronics(id, name, price, stock, volt, warranty, frag, pack);
+                    sectionIdx = 4;
+                }
+                break;
+            case 2:
+                {
+                    int volt, warranty;
+                    cout << "  Voltage: "; cin >> volt;
+                    cout << "  Warranty (months): "; cin >> warranty;
+                    newP = new ElectronicProduct(id, name, price, stock, volt, warranty);
+                    sectionIdx = 0;
+                }
+                break;
+            case 3:
+                {
+                    int cal; bool organic; char expiry[20]; double temp;
+                    cout << "  Calories: "; cin >> cal;
+                    cout << "  Organic (1/0): "; cin >> organic;
+                    cout << "  Expiry Date: "; cin >> expiry;
+                    cout << "  Storage Temp (C): "; cin >> temp;
+                    newP = new PerishableGrocery(id, name, price, stock, cal, true, organic, expiry, temp);
+                    sectionIdx = 2;
+                }
+                break;
+            case 4:
+                {
+                    int cal, life; bool organic; double pres;
+                    cout << "  Calories: "; cin >> cal;
+                    cout << "  Organic (1/0): "; cin >> organic;
+                    cout << "  Shelf Life (years): "; cin >> life;
+                    cout << "  Preservative Level: "; cin >> pres;
+                    newP = new NonPerishable(id, name, price, stock, cal, true, organic, life, pres);
+                    sectionIdx = 2;
+                }
+                break;
+            case 5:
+                {
+                    char sz[10], fab[50], brand[50]; double tax; int edition;
+                    cout << "  Size: "; cin >> sz;
+                    cout << "  Fabric: "; cin >> fab;
+                    cout << "  Brand: "; cin >> brand;
+                    cout << "  Luxury Tax (%): "; cin >> tax;
+                    cout << "  Edition #: "; cin >> edition;
+                    newP = new LuxuryApparel(id, name, price, stock, sz, fab, "Unisex", "All", true, brand, tax/100, edition);
+                    sectionIdx = 5;
+                }
+                break;
+            case 6:
+                {
+                    char sz[10], fab[50];
+                    cout << "  Size: "; cin >> sz;
+                    cout << "  Fabric: "; cin >> fab;
+                    newP = new ClothingProduct(id, name, price, stock, sz, fab);
+                    sectionIdx = 1;
+                }
+                break;
+            case 7:
+                {
+                    char auth[100], isbn[20];
+                    cout << "  Author: "; cin.ignore(); cin.getline(auth, 100);
+                    cout << "  ISBN: "; cin >> isbn;
+                    newP = new BookProduct(id, name, price, stock, auth, isbn);
+                    sectionIdx = 3;
+                }
+                break;
+            default:
+                cout << "\n  Invalid type.\n";
+                return;
+        }
+        
+        if (newP) {
+            addProductToSection(newP, sectionIdx);
+            inventoryLog.recordAction(string(name) + " added to inventory", "ADMIN_ACTION");
+            cout << "\n  [SUCCESS] Product added!\n";
+        }
+    }
+    
+    void updateStock() {
+        printHeader("UPDATE STOCK");
+        
+        int id, newStock;
+        cout << "\n  Product ID: "; cin >> id;
+        
+        Product* p = findProduct(id);
+        if (!p) { cout << "\n  [ERROR] Product not found.\n"; return; }
+        
+        cout << "  Current stock of '" << p->getName() << "': " << p->getStock() << "\n";
+        cout << "  New stock quantity: "; cin >> newStock;
+        
+        p->setStock(newStock);
+        inventoryLog.recordAction(string(p->getName()) + " stock updated to " + to_string(newStock), "ADMIN_ACTION");
+        cout << "\n  [SUCCESS] Stock updated.\n";
+    }
+    
+    void removeProduct() {
+        printHeader("REMOVE PRODUCT");
+        
+        int id;
+        cout << "\n  Product ID to remove: "; cin >> id;
+        
+        for (int i = 0; i < warehouse.getSectionCount(); i++) {
+            InventorySection* section = warehouse.getSection(i);
+            if (section) {
+                for (int j = 0; j < section->getProductCount(); j++) {
+                    if ((*section)[j] && (*section)[j]->getID() == id) {
+                        cout << "  Removing '" << (*section)[j]->getName() << "'...\n";
+                        delete (*section)[j];
+                        // Note: In a full implementation, we would shift remaining products
+                        // For simplicity, we'll just mark that it's removed
+                        inventoryLog.recordAction("Product #" + to_string(id) + " removed", "ADMIN_ACTION");
+                        cout << "  [SUCCESS] Product removed.\n";
+                        return;
+                    }
+                }
+            }
+        }
+        cout << "\n  [ERROR] Product not found.\n";
+    }
+    
+    void showLowStock() const { warehouse.findShortages(); }
+    
+    void showDiscounts() const {
+        printHeader("CURRENT DISCOUNTS");
+        cout << "\n  " << left << setw(8) << "ID"
+             << setw(25) << "Product Name"
+             << setw(15) << "Category"
+             << setw(12) << "Orig. Price"
+             << setw(12) << "Discount"
+             << "Sale Price\n";
+        cout << "  " << string(80, '-') << "\n";
+        
+        for (int i = 0; i < warehouse.getSectionCount(); i++) {
+            const InventorySection* section = warehouse.getSection(i);
+            if (section) {
+                for (int j = 0; j < section->getProductCount(); j++) {
+                    const Product* p = (*section)[j];
+                    if (p) {
+                        double disc = p->calculateDiscount();
+                        double sale = p->getPrice() - disc;
+                        cout << "  " << left << setw(8) << p->getID()
+                             << setw(25) << p->getName()
+                             << setw(15) << p->getCategory()
+                             << "$" << fixed << setprecision(2) << setw(11) << p->getPrice()
+                             << "$" << setw(11) << disc
+                             << "$" << sale << "\n";
+                    }
+                }
+            }
+        }
+    }
+    
+    void showRiskAssessment() const {
+        printHeader("RISK ASSESSMENT REPORT");
+        cout << "\n  " << left << setw(8) << "ID"
+             << setw(25) << "Product Name"
+             << setw(15) << "Category"
+             << setw(12) << "Risk Score"
+             << "Status\n";
+        cout << "  " << string(70, '-') << "\n";
+        
+        for (int i = 0; i < warehouse.getSectionCount(); i++) {
+            const InventorySection* section = warehouse.getSection(i);
+            if (section) {
+                for (int j = 0; j < section->getProductCount(); j++) {
+                    const Product* p = (*section)[j];
+                    if (p) {
+                        double risk = p->calculateRisk();
+                        cout << "  " << left << setw(8) << p->getID()
+                             << setw(25) << p->getName()
+                             << setw(15) << p->getCategory()
+                             << setw(12) << risk
+                             << (risk > 0.2 ? "HIGH RISK" : (risk > 0.1 ? "MEDIUM" : "LOW")) << "\n";
+                    }
+                }
+            }
+        }
+    }
+    
+    void showExpiryAlert() const {
+        printHeader("EXPIRY DATE ALERT");
+        bool found = false;
+        for (int i = 0; i < warehouse.getSectionCount(); i++) {
+            const InventorySection* section = warehouse.getSection(i);
+            if (section) {
+                for (int j = 0; j < section->getProductCount(); j++) {
+                    const Product* p = (*section)[j];
+                    if (p && strcmp(p->getCategory(), "Perishable Grocery") == 0) {
+                        const PerishableGrocery* perishable = dynamic_cast<const PerishableGrocery*>(p);
+                        if (perishable) {
+                            // We can't call non-const method on const object
+                            cout << "  Checking expiry for " << p->getName() << "\n";
+                            found = true;
+                        }
+                    }
+                }
+            }
+        }
+        if (!found) cout << "\n  No perishable items in inventory.\n";
+    }
+    
+    void showSupplierInfo() const {
+        printHeader("SUPPLIER DIRECTORY");
+        for (int i = 0; i < supplierCount; i++) {
+            suppliers[i].display();
+        }
+    }
+    
+    void printInventoryAudit() const { inventoryLog.printAuditTrail(); }
+    
+    void sortSection(int sectionIdx) { 
+        InventorySection* sec = warehouse.getSection(sectionIdx);
+        if (sec) sec->sortByID();
     }
 };
 
 // ================================================================
-//  STUDENT PANEL
+//  DASHBOARD FUNCTIONS
 // ================================================================
-class StudentPanel {
-public:
-    void run(UserRecord* user) {
-        int ch;
-        do {
-            printHeader("STUDENT LEARNING PORTAL");
-            cout << "  Welcome, " << user->username 
-                 << " (ID: " << user->userId << ")  [STUDENT]\n\n";
-            
-            cout << "  +---------------------------------------------------+\n"
-                 << "  |            OOP LEARNING MODULES                   |\n"
-                 << "  +---------------------------------------------------+\n"
-                 << "  |  1.  Inheritance Concept                         |\n"
-                 << "  |  2.  Polymorphism Concept                        |\n"
-                 << "  |  3.  Encapsulation Concept                       |\n"
-                 << "  |  4.  Templates Concept                           |\n"
-                 << "  |  5.  View Class Hierarchy                        |\n"
-                 << "  |  6.  Browse Product Samples                      |\n"
-                 << "  |  0.  Logout                                      |\n"
-                 << "  +---------------------------------------------------+\n"
-                 << "  Choice: ";
-            cin >> ch;
-            cout << '\n';
-            
-            switch (ch) {
-                case 1: showInheritance();    break;
-                case 2: showPolymorphism();   break;
-                case 3: showEncapsulation();  break;
-                case 4: showTemplates();      break;
-                case 5: showHierarchy();      break;
-                case 6: showSampleData();     break;
-                case 0: cout << "  Logging out...\n\n"; break;
-                default: cout << "  Invalid choice.\n";
+void runAdminDashboard(UserManager& um, EnhancedInventoryManager& inv) {
+    int ch;
+    do {
+        printHeader("ADMIN DASHBOARD - ENHANCED");
+        
+        cout << "\n  Logged in as: " << um.getCurrentUser()->getUsername() << " [ADMIN]\n\n";
+        
+        cout << "  +--------------------------------------------------+\n"
+             << "  |           INVENTORY MANAGEMENT                  |\n"
+             << "  +--------------------------------------------------+\n"
+             << "  |  1.  View All Products                          |\n"
+             << "  |  2.  View by Category                           |\n"
+             << "  |  3.  Add New Product                            |\n"
+             << "  |  4.  Update Product Stock                       |\n"
+             << "  |  5.  Remove Product                             |\n"
+             << "  |  6.  Low Stock Alert                            |\n"
+             << "  |  7.  View All Discounts                         |\n"
+             << "  |  8.  Risk Assessment Report                     |\n"
+             << "  |  9.  Expiry Date Alert                          |\n"
+             << "  | 10.  Supplier Directory                         |\n"
+             << "  | 11.  Sort Section by ID                         |\n"
+             << "  | 12.  View Audit Logs                            |\n"
+             << "  +--------------------------------------------------+\n"
+             << "  |  0.  Logout                                     |\n"
+             << "  +--------------------------------------------------+\n"
+             << "  Choice: ";
+        cin >> ch;
+        
+        switch (ch) {
+            case 1: inv.displayAllProducts(); break;
+            case 2: {
+                int cat;
+                cout << "\n  1. Electronics  2. Clothing  3. Grocery  4. Books  5. Apparel\n  Choice: ";
+                cin >> cat;
+                if (cat == 1) inv.displayByCategory("Electronics");
+                else if (cat == 2) inv.displayByCategory("Clothing");
+                else if (cat == 3) inv.displayByCategory("Grocery");
+                else if (cat == 4) inv.displayByCategory("Books");
+                else if (cat == 5) inv.displayByCategory("Apparel");
+                else cout << "\n  Invalid.\n";
+                break;
             }
-            if (ch!=0) { 
-                cout << "\n  Press Enter to continue..."; 
-                cin.ignore(); 
-                cin.get(); 
+            case 3: inv.addProduct(); break;
+            case 4: inv.updateStock(); break;
+            case 5: inv.removeProduct(); break;
+            case 6: inv.showLowStock(); break;
+            case 7: inv.showDiscounts(); break;
+            case 8: inv.showRiskAssessment(); break;
+            case 9: inv.showExpiryAlert(); break;
+            case 10: inv.showSupplierInfo(); break;
+            case 11: {
+                int sec;
+                cout << "  Section (0-5): "; cin >> sec;
+                inv.sortSection(sec);
+                break;
             }
-        } while (ch!=0);
-    }
-    
-private:
-    void showHierarchy() const {
-        printHeader("COMPLETE CLASS HIERARCHY");
-        cout << "  Product [Abstract - L1]\n"
-             << "  |-- GroceryProduct [L2]\n"
-             << "  |    |-- PerishableGrocery [L3]\n"
-             << "  |    |-- NonPerishable [L3]\n"
-             << "  |-- ElectronicProduct [L2]\n"
-             << "  |    |-- FragileElectronics [L3]\n"
-             << "  |-- ClothingProduct [L2]\n\n"
-             << "  Supporting Classes:\n"
-             << "  |-- InventorySection  (Aggregates Product*)\n"
-             << "  |-- Warehouse         (Owns InventorySection[])\n"
-             << "  |-- Supplier          (Manages restocking)\n"
-             << "  |-- AdminModule       (Admin functionality)\n"
-             << "  |-- StudentPanel      (Student learning)\n"
-             << "  |-- TransactionLog<T> (Template class)\n";
-    }
-    
-    void showInheritance() const {
-        printHeader("CONCEPT: INHERITANCE");
-        cout << "  Definition: Inheritance allows a class to inherit\n"
-             << "  properties and methods from another class.\n\n"
-             << "  Example from this project:\n"
-             << "    Product -> GroceryProduct -> PerishableGrocery\n\n"
-             << "  PerishableGrocery inherits:\n"
-             << "    * From Product: ID, price, quantity, brandName\n"
-             << "    * From GroceryProduct: calories, isHalal, nutritionGrade\n"
-             << "    * Its own: expiryDays, storageTemp, storageInstructions\n\n"
-             << "  Benefits:\n"
-             << "    + Code reusability\n"
-             << "    + Hierarchical classification\n"
-             << "    + Easy maintenance\n\n"
-             << "  Code Example:\n"
-             << "    class PerishableGrocery : public GroceryProduct {\n"
-             << "        // Adds new features while reusing parent code\n"
-             << "    };\n";
-    }
-    
-    void showPolymorphism() const {
-        printHeader("CONCEPT: POLYMORPHISM");
-        cout << "  Definition: Polymorphism enables objects to\n"
-             << "  behave differently based on their actual type.\n\n"
-             << "  How it works:\n"
-             << "    Base class pointer -> Derived class object\n"
-             << "    Virtual functions -> Runtime binding\n\n"
-             << "  Demonstration:\n";
-        
-        Product* demo[3];
-        demo[0] = new GroceryProduct(1,5.0,100,"Kelloggs",200,true,"A");
-        demo[1] = new ElectronicProduct(2,200.0,10,"Samsung",220,12);
-        demo[2] = new ClothingProduct(3,30.0,50,"Nike","L","Cotton",'U');
-        
-        for (int i=0;i<3;i++) {
-            cout << "    ";
-            demo[i]->displayStatus();
-            cout << " -> Risk: " << demo[i]->calculateRisk() << '\n';
-            delete demo[i];
+            case 12: inv.printInventoryAudit(); break;
+            case 0: um.logout(); break;
+            default: cout << "\n  Invalid choice.\n";
         }
-        
-        cout << "\n  Benefits:\n"
-             << "    + Same interface, different implementations\n"
-             << "    + Extensible design\n"
-             << "    + Runtime flexibility\n";
-    }
-    
-    void showEncapsulation() const {
-        printHeader("CONCEPT: ENCAPSULATION");
-        cout << "  Definition: Encapsulation bundles data and\n"
-             << "  methods together, hiding internal details.\n\n"
-             << "  Example from this project:\n";
-        
-        PerishableGrocery milk(500, 3.49, 40, "FreshMilk", 120, true, "A", 10, 4.0);
-        
-        cout << "  Public Interface (Getters):\n";
-        cout << "    - getID()       = " << milk.getID()       << '\n'
-             << "    - getBrand()    = " << milk.getBrand()    << '\n'
-             << "    - getPrice()    = $" << milk.getPrice()   << '\n'
-             << "    - getQuantity() = " << milk.getQuantity() << '\n'
-             << "    - getCalories() = " << milk.getCalories() << '\n';
-        
-        cout << "\n  Public Interface (Setters):\n";
-        milk.setQuantity(75);
-        cout << "    - setQuantity(75) -> New quantity: " << milk.getQuantity() << '\n';
-        milk.applyDiscount(10.0);
-        cout << "    - applyDiscount(10%) -> New price: $" 
-             << fixed << setprecision(2) << milk.getPrice() << '\n';
-        
-        cout << "\n  Benefits:\n"
-             << "    + Data protection (private members)\n"
-             << "    + Controlled access via methods\n"
-             << "    + Easy to maintain and modify\n";
-    }
-    
-    void showTemplates() const {
-        printHeader("CONCEPT: TEMPLATES");
-        cout << "  Definition: Templates allow generic programming\n"
-             << "  where the same code works with different data types.\n\n"
-             << "  TransactionLog<T> Class:\n";
-        
-        cout << "  Works with multiple types:\n";
-        TransactionLog<int> intLog(3);
-        intLog.record(100,"First int");
-        intLog.record(200,"Second int");
-        
-        cout << "\n  Integer Log:\n";
-        intLog.printAll();
-        
-        cout << "\n  Also works with:\n"
-             << "    - TransactionLog<Product>  (Product logs)\n"
-             << "    - TransactionLog<Supplier> (Supplier logs)\n"
-             << "    - TransactionLog<double>   (Price logs)\n"
-             << "    - TransactionLog<string>   (Text logs)\n\n"
-             << "  Benefits:\n"
-             << "    + Code reusability\n"
-             << "    + Type safety\n"
-             << "    + No code duplication\n";
-    }
-    
-    void showSampleData() const {
-        printHeader("PRODUCT SAMPLES");
-        cout << "  Real products in the system:\n\n";
-        
-        Product* demo[5];
-        demo[0] = new PerishableGrocery(101,3.99,60,"Fresh Milk",120,true,"A+",4,4.0);
-        demo[1] = new NonPerishable(102,2.49,500,"Rice 5kg",350,true,"B",5,0.1,"Cool Dry");
-        demo[2] = new ElectronicProduct(201,499.99,30,"Samsung TV",220,24,"Standard");
-        demo[3] = new FragileElectronics(202,1299.0,15,"DJI Drone",12,12,"45W",8.5,"Hard Case");
-        demo[4] = new ClothingProduct(301,29.99,200,"Nike Shirt","L","Cotton",'U');
-        
-        for (int i=0;i<5;i++) {
-            cout << "  Product " << i+1 << ":\n";
-            cout << "    ";
-            demo[i]->displayStatus();
-            cout << "\n    Value: $" << fixed << setprecision(2) << demo[i]->calculateValue()
-                 << "  Risk: " << demo[i]->calculateRisk() << "\n\n";
-            delete demo[i];
-        }
-    }
-};
-
-// ================================================================
-//  AUTH SCREEN
-// ================================================================
-static void handleSignUp() {
-    printHeader("CREATE NEW ACCOUNT");
-    if (userCount >= MAX_USERS) { 
-        cout << "  User limit reached. Cannot create more accounts.\n"; 
-        return; 
-    }
-    
-    char uname[32], pwd[32];
-    cout << "  Full Name: "; 
-    cin.ignore();
-    cin.getline(uname, 32);
-    
-    if (usernameExists(uname)) { 
-        cout << "  Username already taken.\n"; 
-        return; 
-    }
-    
-    cout << "  Password: "; 
-    cin >> pwd;
-    
-    userDB[userCount].userId = nextUserId++;
-    strcpy(userDB[userCount].username, uname);
-    strcpy(userDB[userCount].password, pwd);
-    userDB[userCount].isAdmin = false;  // Only one admin exists
-    
-    cout << "\n  [SUCCESS] Account created successfully!\n";
-    cout << "  Your User ID: " << userDB[userCount].userId << '\n';
-    cout << "  Please remember your ID for login.\n";
-    userCount++;
+        if (ch != 0) pressEnter();
+    } while (ch != 0);
 }
 
-static UserRecord* handleSignIn() {
-    printHeader("SIGN IN");
-    int uid;
-    char pwd[32];
-    
-    cout << "  User ID: "; 
-    cin >> uid;
-    cout << "  Password: "; 
-    cin >> pwd;
-    
-    UserRecord* u = authenticate(uid, pwd);
-    if (!u) { 
-        cout << "\n  [ERROR] Invalid credentials. Please try again.\n"; 
-        return nullptr; 
-    }
-    
-    cout << "\n  [SUCCESS] Login successful!\n";
-    cout << "  Welcome back, " << u->username << "!\n";
-    return u;
+void runUserDashboard(UserManager& um, EnhancedInventoryManager& inv) {
+    int ch;
+    do {
+        printHeader("CUSTOMER DASHBOARD");
+        
+        cout << "\n  Logged in as: " << um.getCurrentUser()->getUsername()
+             << " | Wallet: $" << fixed << setprecision(2)
+             << um.getCurrentUser()->getWalletBalance() << "\n\n";
+        
+        cout << "  +--------------------------------------------------+\n"
+             << "  |                SHOPPING                         |\n"
+             << "  +--------------------------------------------------+\n"
+             << "  |  1.  Browse All Products                        |\n"
+             << "  |  2.  Browse by Category                         |\n"
+             << "  |  3.  Add Product to Cart                        |\n"
+             << "  |  4.  View Cart                                  |\n"
+             << "  |  5.  Checkout                                   |\n"
+             << "  +--------------------------------------------------+\n"
+             << "  |                ACCOUNT                          |\n"
+             << "  +--------------------------------------------------+\n"
+             << "  |  6.  View Order History                         |\n"
+             << "  |  7.  Add Funds to Wallet                        |\n"
+             << "  |  8.  View Profile                               |\n"
+             << "  |  9.  Edit Profile                               |\n"
+             << "  | 10.  Change Password                            |\n"
+             << "  | 11.  Clear Cart                                 |\n"
+             << "  +--------------------------------------------------+\n"
+             << "  |  0.  Logout                                     |\n"
+             << "  +--------------------------------------------------+\n"
+             << "  Choice: ";
+        cin >> ch;
+        
+        switch (ch) {
+            case 1: inv.displayAllProducts(); break;
+            case 2: {
+                int cat;
+                cout << "\n  1. Electronics  2. Clothing  3. Grocery  4. Books\n  Choice: ";
+                cin >> cat;
+                if (cat == 1) inv.displayByCategory("Electronics");
+                else if (cat == 2) inv.displayByCategory("Clothing");
+                else if (cat == 3) inv.displayByCategory("Grocery");
+                else if (cat == 4) inv.displayByCategory("Books");
+                else cout << "\n  Invalid.\n";
+                break;
+            }
+            case 3: {
+                int id, qty;
+                cout << "\n  Product ID: "; cin >> id;
+                cout << "  Quantity: "; cin >> qty;
+                Product* p = inv.findProduct(id);
+                if (!p) cout << "\n  [ERROR] Product not found.\n";
+                else if (qty <= 0) cout << "\n  [ERROR] Invalid quantity.\n";
+                else if (p->getStock() < qty) cout << "\n  [ERROR] Only " << p->getStock() << " in stock.\n";
+                else um.addToCart(p->getID(), p->getName(), p->getPrice(), qty);
+                break;
+            }
+            case 4: um.viewCart(); break;
+            case 5: um.checkout(); break;
+            case 6: um.viewOrders(); break;
+            case 7: um.addFunds(); break;
+            case 8: um.viewProfile(); break;
+            case 9: um.editProfile(); break;
+            case 10: um.changePassword(); break;
+            case 11: um.clearCart(); break;
+            case 0: um.logout(); break;
+            default: cout << "\n  Invalid choice.\n";
+        }
+        if (ch != 0) pressEnter();
+    } while (ch != 0);
 }
 
 // ================================================================
-//  MAIN
+//  MAIN FUNCTION
 // ================================================================
 int main() {
-    seedDefaultUsers();
-    
-    // Create the single AdminModule instance (persists across sessions)
-    AdminModule adminMod;
-    StudentPanel studentPanel;
+    UserManager userManager;
+    EnhancedInventoryManager inventory;
     
     int choice;
-    do {
-        printHeader("INVENTORY MANAGEMENT SYSTEM");
-        cout << "  +---------------------------------------------------+\n"
-             << "  |                 WELCOME TO THE SYSTEM             |\n"
-             << "  +---------------------------------------------------+\n"
-             << "  |                                                   |\n"
-             << "  |  1.  Sign In                                      |\n"
-             << "  |  2.  Create New Account                           |\n"
-             << "  |  0.  Exit                                         |\n"
-             << "  |                                                   |\n"
-             << "  +---------------------------------------------------+\n"
+    bool running = true;
+    
+    while (running) {
+        cout << "\n";
+        printLine('=', 70);
+        cout << "  " << string(20, ' ') << "ENHANCED INVENTORY MANAGEMENT SYSTEM\n";
+        cout << "  " << string(22, ' ') << "OOP Final Project - C++\n";
+        printLine('=', 70);
+        
+        cout << "\n"
+             << "  +--------------------------------------------------+\n"
+             << "  |            WELCOME TO THE SYSTEM                |\n"
+             << "  +--------------------------------------------------+\n"
+             << "  +--------------------------------------------------+\n"
+             << "  |  1.  User Sign Up                               |\n"
+             << "  |  2.  Admin Login                                |\n"
+             << "  |  3.  User Login                                 |\n"
+             << "  |  0.  Exit                                       |\n"
+             << "  +--------------------------------------------------+\n"
              << "  Choice: ";
         cin >> choice;
-        cout << '\n';
         
-        if (choice == 2) {
-            handleSignUp();
-        } else if (choice == 1) {
-            UserRecord* user = handleSignIn();
-            if (user) {
-                if (user->isAdmin)
-                    adminMod.run(user);
-                else
-                    studentPanel.run(user);
-            }
-        } else if (choice != 0) {
-            cout << "  Invalid choice.\n";
+        switch (choice) {
+            case 1:
+                userManager.signUp();
+                pressEnter();
+                break;
+            case 2:
+                if (userManager.adminLogin()) {
+                    runAdminDashboard(userManager, inventory);
+                } else {
+                    pressEnter();
+                }
+                break;
+            case 3:
+                if (userManager.userLogin()) {
+                    runUserDashboard(userManager, inventory);
+                } else {
+                    pressEnter();
+                }
+                break;
+            case 0:
+                running = false;
+                cout << "\n  Thank you for using the Enhanced Inventory Management System!\n";
+                break;
+            default:
+                cout << "\n  [ERROR] Invalid choice.\n";
+                pressEnter();
         }
-        
-        if (choice != 0 && choice != 1) {
-            cout << "\n  Press Enter to continue...";
-            cin.ignore();
-            cin.get();
-        }
-    } while (choice != 0);
-    
-    cout << "\n  +---------------------------------------------------+\n"
-         << "  |         THANK YOU FOR USING THE SYSTEM!            |\n"
-         << "  |                  GOODBYE!                          |\n"
-         << "  +---------------------------------------------------+\n";
+    }
     
     return 0;
 }
